@@ -1,35 +1,39 @@
-"""Configuration settings for MISUNDERSTOOD backend application.
-"""
-
-import os
-from pathlib import Path
-from dotenv import load_dotenv
-
-# Automatically load .env from project root
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent
-load_dotenv(ROOT_DIR / ".env")
-
-class Settings:
-    """Application settings loaded from environment."""
-
-    APP_NAME: str = "MISUNDERSTOOD"
-    APP_VERSION: str = "1.0.0"
-    API_PREFIX: str = "/api"
-
-    # Database: Default to local SQLite, overridable by DATABASE_URL (e.g. Postgres)
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./misunderstood.db")
-
-    # CORS configuration
-    CORS_ORIGINS: list[str] = [
-        origin.strip()
-        for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
-        if origin.strip()
-    ]
-
-    # AI Configuration (inherited by backend.ai module)
-    AI_PROVIDER: str = os.getenv("AI_PROVIDER", "auto")
-    AI_MODEL: str = os.getenv("AI_MODEL", "")
-    AI_MAX_TOKENS: int = int(os.getenv("AI_MAX_TOKENS", "3000"))
+from functools import lru_cache
+from typing import List, Union
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-settings = Settings()
+class Settings(BaseSettings):
+    PROJECT_NAME: str = "MISUNDERSTOOD"
+    ENVIRONMENT: str = "development"
+    DATABASE_URL: str = "sqlite:///./misunderstood.db"
+    CORS_ORIGINS: Union[str, List[str]] = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173"
+    AI_API_KEY: str = ""
+    AI_MODEL: str = "gemini-1.5-pro"
+    USE_MOCK_AI: bool = True
+    SECRET_KEY: str = "misunderstood-development-secret-key-super-secure-change-in-prod"
+    
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def assemble_db_connection(cls, v: str) -> str:
+        if isinstance(v, str) and v.startswith("postgres://"):
+            return v.replace("postgres://", "postgresql://", 1)
+        return v
+
+    @property
+    def cors_origins_list(self) -> List[str]:
+        if isinstance(self.CORS_ORIGINS, list):
+            return self.CORS_ORIGINS
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
+
+@lru_cache()
+def get_settings() -> Settings:
+    return Settings()

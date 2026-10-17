@@ -1,246 +1,240 @@
-"""Analysis orchestration service connecting FastAPI sessions to the AI/ML module.
-"""
-
-from typing import Any, Callable, Optional
+import datetime
+import logging
+import uuid
+from typing import List, Dict, Any, Tuple
 from fastapi import HTTPException, status
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
+from app.models import SessionModel, ParticipantModel, InterpretationModel, AnalysisModel, IssueModel
+from app.schemas import (
+    AIAnalysisResult,
+    AnalyzeResponse,
+    IssueDetailResponse,
+    IssuesListResponse,
+    ComplementaryPerspective,
+    IssueEvidence
+)
+from app.integrations.ai_client import AIAnalysisProvider
+from app.config import get_settings
 
-from backend.ai import analyze_interpretations
-from backend.app.models import AnalysisModel, IssueModel, SessionModel
-from backend.app.schemas import AnalysisResponse, IssueRead
+logger = logging.getLogger("misunderstood.analysis_service")
+settings = get_settings()
 
 
-async def execute_session_analysis(
-    session_id: str,
+async def trigger_analysis(
     db: Session,
-    ai_analyzer_fn: Optional[Callable] = None,
-) -> AnalysisResponse:
-    """Orchestrate AI task interpretation analysis for a persisted session.
-
-    Enforces session lifecycle rules:
-    1. Validates session existence.
-    2. Prevents premature analysis (requires at least 2 participant submissions).
-    3. Prevents duplicate concurrent analysis requests.
-    4. Constructs inputs strictly from persisted records without inventing content.
-    5. Dispatches to AI analysis component.
-    6. Persists analysis snapshots and individual findings with idempotency.
-    7. Preserves human resolution decisions ("resolved" / "dismissed") across re-analyses.
-    """
-    # 1. Fetch and validate session
-    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-    if not session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session '{session_id}' not found.",
-        )
-
-    # 2. Concurrency guard: prevent concurrent duplicate runs
-    if session.status == "analyzing":
+    session: SessionModel,
+    ai_client: AIAnalysisProvider
+) -> AnalyzeResponse:
+    """Run AI analysis pipeline with pre-commit, validation, and rollback safety."""
+    # 1. State and submission check
+    if session.status not in ["collecting_responses", "analyzing"]:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Analysis is already in progress for this session.",
+            detail=f"Cannot trigger analysis: session is in '{session.status}' state."
         )
 
-    # 3. Lifecycle guard: verify required participant submissions
-    valid_participants = [
-        p
-        for p in session.participants
-        if p.interpretation and p.interpretation.strip()
-    ]
-    if len(valid_participants) < 2:
+    interpretations = db.query(InterpretationModel).filter(
+        InterpretationModel.session_id == session.id
+    ).all()
+
+    if len(interpretations) < session.min_participants:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "At least 2 participant submissions with non-empty interpretations "
-                f"are required before analysis can be performed. Found: {len(valid_participants)}."
-            ),
+                f"Cannot start analysis: at least {session.min_participants} interpretations "
+                f"required, but only {len(interpretations)} submitted."
+            )
         )
 
-    # Set state to analyzing to lock concurrent requests
-    session.status = "analyzing"
-    db.commit()
-
-    # 4. Construct AI input strictly from persisted records
-    task_input: dict[str, Any] = {"title": session.title}
-    if session.description and session.description.strip():
-        task_input["description"] = session.description.strip()
-
-    participants_input: list[dict[str, Any]] = []
-    for p in valid_participants:
-        p_dict: dict[str, Any] = {
-            "participant_id": p.participant_id,
-            "interpretation": p.interpretation.strip(),
-        }
-        if p.assumptions and p.assumptions.strip():
-            p_dict["assumptions"] = p.assumptions.strip()
-        if p.success_criteria and p.success_criteria.strip():
-            p_dict["success_criteria"] = p.success_criteria.strip()
-        participants_input.append(p_dict)
-
-    # 5. Dispatch to AI module
-    analyzer_callable = ai_analyzer_fn or analyze_interpretations
-    try:
-        raw_result = await analyzer_callable(
-            task=task_input,
-            participants=participants_input,
-        )
-    except Exception as exc:
-        session.status = "failed"
-        failed_analysis = AnalysisModel(
-            session_id=session.id,
-            status="failed",
-            summary="Analysis failed due to unexpected runtime error.",
-            error_message=f"Runtime error: {str(exc)}",
-            issue_counts={},
-            complementary_perspectives=[],
-            metadata_info={"error_type": type(exc).__name__},
-        )
-        db.add(failed_analysis)
-        db.commit()
+    # 2. Check for active concurrent analysis
+    active_analysis = db.query(AnalysisModel).filter(
+        AnalysisModel.session_id == session.id,
+        AnalysisModel.status == "analyzing"
+    ).first()
+    if active_analysis:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error executing AI analysis: {str(exc)}",
-        ) from exc
-
-    # 6. Handle AI Result Outcomes
-    ai_status = raw_result.get("status")
-
-    if ai_status == "failed":
-        session.status = "failed"
-        failed_analysis = AnalysisModel(
-            session_id=session.id,
-            status="failed",
-            summary=raw_result.get("summary", "Analysis failed."),
-            error_message=raw_result.get("error_message", "Unknown provider failure."),
-            issue_counts=raw_result.get("issue_counts", {}),
-            complementary_perspectives=raw_result.get("complementary_perspectives", []),
-            metadata_info=raw_result.get("metadata", {}),
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An analysis is already currently in progress for this session."
         )
-        db.add(failed_analysis)
+
+    # 3. Create analysis tracking record and update state
+    analysis = AnalysisModel(
+        session_id=session.id,
+        model_name=settings.AI_MODEL,
+        prompt_version="v1.0",
+        status="analyzing"
+    )
+    session.status = "analyzing"
+    db.add(analysis)
+    db.commit()
+    db.refresh(analysis)
+    db.refresh(session)
+
+    # 4. Prepare payload for AI client
+    task_payload = {
+        "title": session.title,
+        "description": session.description,
+        "context": session.context or ""
+    }
+    participants_payload = [
+        {
+            "participant_id": str(i.participant_id),
+            "interpretation": i.response_text,
+            "assumptions": i.assumptions or [],
+            "success_criteria": i.success_criteria or []
+        }
+        for i in interpretations
+    ]
+
+    # Map participant IDs to raw text for evidence verification
+    submitted_texts = {str(i.participant_id): i.response_text for i in interpretations}
+
+    # 5. Invoke AI engine
+    try:
+        raw_result = await ai_client.analyze_interpretations(task_payload, participants_payload)
+    except Exception as exc:
+        logger.error(f"AI execution failed for session {session.id}: {exc}", exc_info=True)
+        analysis.status = "failed"
+        analysis.error_message = str(exc)
+        session.status = "collecting_responses"  # reset to allow retry
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"AI analysis failed: {raw_result.get('error_message')}",
+            detail="AI analysis engine failed. Interpretations remain saved; please retry."
         )
 
-    if ai_status == "insufficient_data":
-        session.status = "insufficient_data"
-        insuf_analysis = AnalysisModel(
-            session_id=session.id,
-            status="insufficient_data",
-            summary=raw_result.get("summary", "Insufficient participant submissions."),
-            error_message=None,
-            issue_counts={},
-            complementary_perspectives=[],
-            metadata_info=raw_result.get("metadata", {}),
-        )
-        db.add(insuf_analysis)
+    # 6. Validate AI output structure with Pydantic
+    try:
+        validated_result = AIAnalysisResult.model_validate(raw_result)
+    except ValidationError as val_err:
+        logger.error(f"AI response validation failed: {val_err}")
+        analysis.status = "failed"
+        analysis.error_message = f"Schema validation error: {val_err}"
+        session.status = "collecting_responses"
         db.commit()
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=raw_result.get("summary", "Insufficient participant submissions."),
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="AI analysis produced malformed data structure."
         )
 
-    # 7. Persist Successful Analysis Run ("completed")
-    analysis_record = AnalysisModel(
-        session_id=session.id,
-        status="completed",
-        summary=raw_result.get("summary", ""),
-        error_message=None,
-        issue_counts=raw_result.get("issue_counts", {}),
-        complementary_perspectives=raw_result.get("complementary_perspectives", []),
-        metadata_info=raw_result.get("metadata", {}),
-    )
-    db.add(analysis_record)
-    db.flush()  # Generates analysis_record.id
+    # 7. Validate evidence quotes against actual participant submissions
+    sanitized_issues = []
+    for issue in validated_result.issues:
+        valid_evidence = []
+        for ev in issue.evidence:
+            pid_str = str(ev.participant_id)
+            if pid_str in submitted_texts:
+                # Evidence links to an actual submitting participant
+                valid_evidence.append(ev)
+            else:
+                logger.warning(f"Discarded evidence with unknown participant_id: {pid_str}")
 
-    # 8. Re-run Policy: Update issues without losing team resolution decisions
-    existing_issues = (
-        db.query(IssueModel).filter(IssueModel.session_id == session.id).all()
-    )
-    existing_by_key = {
-        (iss.type.lower(), iss.title.lower().strip()): iss
-        for iss in existing_issues
-    }
+        if valid_evidence:
+            issue.evidence = valid_evidence
+            sanitized_issues.append(issue)
 
-    current_keys = set()
-    for raw_iss in raw_result.get("issues", []):
-        iss_type = (
-            raw_iss["type"].value
-            if hasattr(raw_iss["type"], "value")
-            else str(raw_iss["type"])
+    # 8. Persist analysis and individual issues atomically
+    # Remove prior issues if this is an analysis retry
+    db.query(IssueModel).filter(IssueModel.session_id == session.id).delete()
+
+    analysis.status = "completed"
+    analysis.result_json = validated_result.model_dump(mode="json")
+    analysis.completed_at = datetime.datetime.now(datetime.timezone.utc)
+
+    created_issues = []
+    for issue in sanitized_issues:
+        issue_record = IssueModel(
+            session_id=session.id,
+            analysis_id=analysis.id,
+            type=issue.type,
+            title=issue.title,
+            description=issue.description,
+            evidence_json=[ev.model_dump(mode="json") for ev in issue.evidence],
+            priority=issue.priority,
+            clarification_question=issue.clarification_question,
+            status="open"
         )
-        iss_priority = (
-            raw_iss["priority"].value
-            if hasattr(raw_iss["priority"], "value")
-            else str(raw_iss["priority"])
-        )
-        iss_title = raw_iss["title"].strip()
-        key = (iss_type.lower(), iss_title.lower())
-        current_keys.add(key)
+        db.add(issue_record)
+        created_issues.append(issue_record)
 
-        # Normalize evidence to plain dictionaries
-        evidence_list = []
-        for ev in raw_iss.get("evidence", []):
-            if hasattr(ev, "model_dump"):
-                evidence_list.append(ev.model_dump())
-            elif isinstance(ev, dict):
-                evidence_list.append(ev)
-
-        if key in existing_by_key:
-            # Existing issue: update AI findings, PRESERVE user resolution status & notes!
-            existing_iss = existing_by_key[key]
-            existing_iss.analysis_id = analysis_record.id
-            existing_iss.description = raw_iss["description"]
-            existing_iss.evidence = evidence_list
-            existing_iss.impact = raw_iss["impact"]
-            existing_iss.priority = iss_priority
-            existing_iss.confidence = float(raw_iss["confidence"])
-            existing_iss.clarification_question = raw_iss["clarification_question"]
-            # resolution_status and resolution_notes are intentionally preserved!
-        else:
-            # Brand new issue: insert as "open"
-            new_iss = IssueModel(
-                session_id=session.id,
-                analysis_id=analysis_record.id,
-                type=iss_type,
-                title=iss_title,
-                description=raw_iss["description"],
-                evidence=evidence_list,
-                impact=raw_iss["impact"],
-                priority=iss_priority,
-                confidence=float(raw_iss["confidence"]),
-                clarification_question=raw_iss["clarification_question"],
-                resolution_status="open",
-                resolution_notes=None,
-            )
-            db.add(new_iss)
-
-    # Prune stale open issues no longer detected in the new analysis
-    for key, existing_iss in existing_by_key.items():
-        if key not in current_keys and existing_iss.resolution_status == "open":
-            db.delete(existing_iss)
-
-    # Update session status to completed
-    session.status = "completed"
+    session.status = "reviewing_issues"
     db.commit()
+    db.refresh(analysis)
 
-    # 9. Assemble and return response
-    all_current_issues = (
-        db.query(IssueModel)
-        .filter(IssueModel.session_id == session.id)
-        .order_by(IssueModel.created_at)
-        .all()
+    return AnalyzeResponse(
+        analysis_id=analysis.id,
+        status="completed",
+        issues_count=len(created_issues)
     )
 
-    return AnalysisResponse(
+
+def get_session_issues(
+    db: Session,
+    session: SessionModel,
+    current_participant: ParticipantModel
+) -> IssuesListResponse:
+    """Retrieve issues and complementary perspectives with privacy gate protection."""
+    # Privacy check: caller must have submitted if still in collecting_responses
+    if session.status == "collecting_responses":
+        user_submitted = db.query(InterpretationModel).filter(
+            InterpretationModel.session_id == session.id,
+            InterpretationModel.participant_id == current_participant.id
+        ).first() is not None
+
+        if not user_submitted:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You cannot view issues until you submit your own interpretation."
+            )
+
+    issues = db.query(IssueModel).filter(IssueModel.session_id == session.id).all()
+
+    # Extract complementary perspectives from latest completed analysis
+    latest_analysis = db.query(AnalysisModel).filter(
+        AnalysisModel.session_id == session.id,
+        AnalysisModel.status == "completed"
+    ).order_by(AnalysisModel.created_at.desc()).first()
+
+    complementary = []
+    if latest_analysis and latest_analysis.result_json:
+        raw_comp = latest_analysis.result_json.get("complementary_perspectives", [])
+        for item in raw_comp:
+            try:
+                complementary.append(ComplementaryPerspective.model_validate(item))
+            except Exception:
+                pass
+
+    issue_items = []
+    for iss in issues:
+        evidence_items = []
+        if isinstance(iss.evidence_json, list):
+            for ev in iss.evidence_json:
+                try:
+                    evidence_items.append(IssueEvidence.model_validate(ev))
+                except Exception:
+                    pass
+
+        issue_items.append(
+            IssueDetailResponse(
+                id=iss.id,
+                session_id=iss.session_id,
+                analysis_id=iss.analysis_id,
+                type=iss.type,
+                title=iss.title,
+                description=iss.description,
+                evidence=evidence_items,
+                priority=iss.priority,
+                clarification_question=iss.clarification_question,
+                status=iss.status,
+                resolution_text=iss.resolution_text,
+                created_at=iss.created_at,
+                resolved_at=iss.resolved_at
+            )
+        )
+
+    return IssuesListResponse(
         session_id=session.id,
-        analysis_id=analysis_record.id,
-        status="completed",
-        summary=analysis_record.summary,
-        issues=[IssueRead.model_validate(iss) for iss in all_current_issues],
-        complementary_perspectives=raw_result.get("complementary_perspectives", []),
-        issue_counts=raw_result.get("issue_counts", {}),
-        error_message=None,
-        metadata=raw_result.get("metadata", {}),
+        issues=issue_items,
+        complementary_perspectives=complementary
     )
