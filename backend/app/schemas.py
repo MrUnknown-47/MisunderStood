@@ -1,46 +1,21 @@
-"""Pydantic schemas for request validation and API responses.
-"""
-
 from datetime import datetime
 from typing import Any, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 from backend.ai.schemas import (
     AnalysisStatus,
     ComplementaryPerspective,
-    Evidence,
-    Issue,
     IssueCounts,
-    IssueType,
-    PriorityLevel,
 )
 
 
-# ============================================================================
-# Session Schemas
-# ============================================================================
-
-
 class SessionCreate(BaseModel):
-    """Payload to create a new collaborative task session."""
-
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    title: str = Field(
-        ...,
-        min_length=1,
-        max_length=200,
-        description="The shared task or instruction given to the team",
-    )
-    description: Optional[str] = Field(
-        default=None,
-        max_length=2000,
-        description="Optional additional context or background instructions",
-    )
+    title: str = Field(..., min_length=1, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=2000)
 
 
 class SessionRead(BaseModel):
-    """Response representation of a task session."""
-
     model_config = ConfigDict(from_attributes=True)
 
     id: str
@@ -53,48 +28,17 @@ class SessionRead(BaseModel):
     updated_at: datetime
 
 
-# ============================================================================
-# Participant Schemas
-# ============================================================================
-
-
 class ParticipantCreate(BaseModel):
-    """Payload for submitting an independent task interpretation."""
-
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    participant_id: str = Field(
-        ...,
-        min_length=1,
-        max_length=100,
-        description="Unique identifier or handle for the participant",
-    )
-    name: Optional[str] = Field(
-        default=None,
-        max_length=100,
-        description="Optional friendly display name",
-    )
-    interpretation: str = Field(
-        ...,
-        min_length=1,
-        max_length=5000,
-        description="The participant's independent interpretation of the task",
-    )
-    assumptions: Optional[str] = Field(
-        default=None,
-        max_length=2000,
-        description="Optional unconfirmed assumptions made by the participant",
-    )
-    success_criteria: Optional[str] = Field(
-        default=None,
-        max_length=2000,
-        description="Optional definition of done or success criteria",
-    )
+    participant_id: str = Field(..., min_length=1, max_length=100)
+    name: Optional[str] = Field(default=None, max_length=100)
+    interpretation: str = Field(..., min_length=1, max_length=5000)
+    assumptions: Optional[str] = Field(default=None, max_length=2000)
+    success_criteria: Optional[str] = Field(default=None, max_length=2000)
 
 
 class ParticipantRead(BaseModel):
-    """Response representation of a participant's submission."""
-
     model_config = ConfigDict(from_attributes=True)
 
     id: str
@@ -107,14 +51,7 @@ class ParticipantRead(BaseModel):
     submitted_at: datetime
 
 
-# ============================================================================
-# Issue Schemas
-# ============================================================================
-
-
 class IssueRead(BaseModel):
-    """Persisted misunderstanding finding returned by the API."""
-
     model_config = ConfigDict(from_attributes=True)
 
     id: str
@@ -128,36 +65,20 @@ class IssueRead(BaseModel):
     priority: str
     confidence: float
     clarification_question: str
-    resolution_status: str  # "open", "resolved", "dismissed"
+    resolution_status: str
     resolution_notes: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
 
 class IssueUpdateStatus(BaseModel):
-    """Payload to update the resolution status of an issue."""
-
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    resolution_status: Literal["open", "resolved", "dismissed"] = Field(
-        ...,
-        description="New status for the issue: open, resolved, or dismissed",
-    )
-    resolution_notes: Optional[str] = Field(
-        default=None,
-        max_length=1000,
-        description="Optional context or agreed resolution notes from the team",
-    )
-
-
-# ============================================================================
-# Analysis Response Schema
-# ============================================================================
+    resolution_status: Literal["open", "resolved", "dismissed"]
+    resolution_notes: Optional[str] = Field(default=None, max_length=1000)
 
 
 class AnalysisResponse(BaseModel):
-    """API response for POST /api/sessions/{session_id}/analyze."""
-
     model_config = ConfigDict(from_attributes=True)
 
     session_id: str
@@ -173,14 +94,7 @@ class AnalysisResponse(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-# ============================================================================
-# Agreement & Bridge Test Schemas
-# ============================================================================
-
-
 class AgreementRead(BaseModel):
-    """Shared confirmed agreement / checklist."""
-
     model_config = ConfigDict(from_attributes=True)
 
     id: str
@@ -194,21 +108,12 @@ class AgreementRead(BaseModel):
 
 
 class AgreementConfirmPayload(BaseModel):
-    """Payload for participant confirmation of the shared agreement."""
-
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    participant_id: str = Field(
-        ...,
-        min_length=1,
-        max_length=100,
-        description="ID of the participant confirming the agreement",
-    )
+    participant_id: str = Field(..., min_length=1, max_length=100)
 
 
 class BridgeTestResponse(BaseModel):
-    """Before vs After comparison metrics measuring misunderstanding resolution."""
-
     session_id: str
     initial_issues_count: int
     resolved_count: int
@@ -218,9 +123,8 @@ class BridgeTestResponse(BaseModel):
     is_fully_confirmed: bool
     confirmed_participants: list[str]
     total_participants: int
-    bridge_status: str  # "bridged", "in_progress", "unresolved"
+    bridge_status: str
     disclaimer: str = (
         "This metric reflects the resolution of identified differences among participants, "
         "not proof of universal understanding."
     )
-

@@ -1,7 +1,4 @@
-"""Issue retrieval and resolution status management routes.
-"""
-
-from typing import Any, Optional
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
@@ -19,16 +16,9 @@ router = APIRouter(prefix="/sessions", tags=["Issues"])
 )
 def get_session_issues(
     session_id: str,
-    resolution_status: Optional[str] = Query(
-        default=None,
-        description="Filter issues by resolution status (e.g., 'open', 'resolved', 'dismissed')",
-    ),
+    resolution_status: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
-) -> Any:
-    """Retrieve all persisted misunderstanding issues for a session.
-
-    Supports filtering by resolution status.
-    """
+) -> list[IssueRead]:
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(
@@ -54,11 +44,7 @@ def update_issue_status(
     issue_id: str,
     payload: IssueUpdateStatus,
     db: Session = Depends(get_db),
-) -> Any:
-    """Update an issue's human resolution status ('open', 'resolved', 'dismissed').
-
-    Human decisions are persisted and will not be overwritten by re-running analysis.
-    """
+) -> IssueRead:
     issue = (
         db.query(IssueModel)
         .filter(

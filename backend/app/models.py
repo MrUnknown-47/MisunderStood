@@ -1,32 +1,27 @@
-"""SQLAlchemy database models for MISUNDERSTOOD backend.
-"""
-
-import uuid
 import secrets
+import uuid
 from sqlalchemy import (
+    Boolean,
     Column,
-    String,
-    Text,
     DateTime,
+    Float,
     ForeignKey,
     JSON,
-    Float,
-    Boolean,
+    String,
+    Text,
     func,
 )
 from sqlalchemy.orm import relationship
+
 from backend.app.database import Base
 
 
 def generate_session_code() -> str:
-    """Generate a readable 6-character alphanumeric session code."""
     alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
     return "".join(secrets.choice(alphabet) for _ in range(6))
 
 
 class SessionModel(Base):
-    """Represents a collaborative task session."""
-
     __tablename__ = "sessions"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -39,12 +34,7 @@ class SessionModel(Base):
     )
     title = Column(String(200), nullable=False)
     description = Column(Text, nullable=True)
-    status = Column(
-        String(30),
-        nullable=False,
-        default="collecting",
-        # Lifecycle states: "collecting", "analyzing", "completed", "failed", "insufficient_data"
-    )
+    status = Column(String(30), nullable=False, default="collecting")
     created_at = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -55,7 +45,6 @@ class SessionModel(Base):
         nullable=False,
     )
 
-    # Relationships
     participants = relationship(
         "ParticipantModel",
         back_populates="session",
@@ -83,8 +72,6 @@ class SessionModel(Base):
 
 
 class ParticipantModel(Base):
-    """Represents a participant's submitted interpretation for a session."""
-
     __tablename__ = "participants"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -107,8 +94,6 @@ class ParticipantModel(Base):
 
 
 class AnalysisModel(Base):
-    """Persisted snapshot of an AI analysis run for a session."""
-
     __tablename__ = "analyses"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -118,9 +103,7 @@ class AnalysisModel(Base):
         nullable=False,
         index=True,
     )
-    status = Column(
-        String(30), nullable=False
-    )  # "completed", "failed", "insufficient_data"
+    status = Column(String(30), nullable=False)
     summary = Column(Text, nullable=False)
     error_message = Column(Text, nullable=True)
     issue_counts = Column(JSON, nullable=False, default=dict)
@@ -139,8 +122,6 @@ class AnalysisModel(Base):
 
 
 class IssueModel(Base):
-    """Persisted misunderstanding finding backed by participant evidence."""
-
     __tablename__ = "issues"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -164,12 +145,7 @@ class IssueModel(Base):
     priority = Column(String(20), nullable=False)
     confidence = Column(Float, nullable=False)
     clarification_question = Column(Text, nullable=False)
-    resolution_status = Column(
-        String(30),
-        nullable=False,
-        default="open",
-        # "open", "resolved", "dismissed"
-    )
+    resolution_status = Column(String(30), nullable=False, default="open")
     resolution_notes = Column(Text, nullable=True)
     created_at = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -186,8 +162,6 @@ class IssueModel(Base):
 
 
 class AgreementModel(Base):
-    """Persisted shared agreement / checklist and participant confirmations."""
-
     __tablename__ = "agreements"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -198,9 +172,9 @@ class AgreementModel(Base):
         nullable=False,
         index=True,
     )
-    items = Column(JSON, nullable=False, default=list)  # list of agreed requirement strings
-    excluded_items = Column(JSON, nullable=False, default=list)  # list of out-of-scope strings
-    confirmed_by = Column(JSON, nullable=False, default=list)  # list of participant_ids
+    items = Column(JSON, nullable=False, default=list)
+    excluded_items = Column(JSON, nullable=False, default=list)
+    confirmed_by = Column(JSON, nullable=False, default=list)
     is_fully_confirmed = Column(Boolean, default=False, nullable=False)
     created_at = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

@@ -1,7 +1,3 @@
-"""Agreement compilation, confirmation, and Bridge Test metrics routes.
-"""
-
-from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -9,7 +5,6 @@ from backend.app.database import get_db
 from backend.app.models import (
     AgreementModel,
     AnalysisModel,
-    IssueModel,
     SessionModel,
 )
 from backend.app.schemas import (
@@ -29,8 +24,7 @@ router = APIRouter(prefix="/sessions", tags=["Agreements & Bridge Test"])
 def get_or_compile_agreement(
     session_id: str,
     db: Session = Depends(get_db),
-) -> Any:
-    """Compile or retrieve the shared agreement checklist based on resolved findings."""
+) -> AgreementModel:
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(
@@ -42,7 +36,6 @@ def get_or_compile_agreement(
         db.query(AgreementModel).filter(AgreementModel.session_id == session_id).first()
     )
 
-    # Compile agreement items from task and resolved issues
     items: list[str] = [f"Core Deliverable: {session.title}"]
     if session.description:
         items.append(f"Context / Goal: {session.description}")
@@ -51,17 +44,16 @@ def get_or_compile_agreement(
 
     for iss in session.issues:
         if iss.resolution_status == "resolved":
-            res_detail = f"Agreed: {iss.title}"
+            detail = f"Agreed: {iss.title}"
             if iss.resolution_notes:
-                res_detail += f" ({iss.resolution_notes})"
-            items.append(res_detail)
+                detail += f" ({iss.resolution_notes})"
+            items.append(detail)
         elif iss.resolution_status == "dismissed":
-            dis_detail = f"Excluded / Out of Scope: {iss.title}"
+            detail = f"Excluded / Out of Scope: {iss.title}"
             if iss.resolution_notes:
-                dis_detail += f" ({iss.resolution_notes})"
-            excluded_items.append(dis_detail)
+                detail += f" ({iss.resolution_notes})"
+            excluded_items.append(detail)
 
-    # Include complementary perspectives from latest analysis
     latest_analysis = (
         db.query(AnalysisModel)
         .filter(AnalysisModel.session_id == session_id)
@@ -81,15 +73,12 @@ def get_or_compile_agreement(
             is_fully_confirmed=False,
         )
         db.add(agreement)
-        db.commit()
-        db.refresh(agreement)
     else:
-        # Refresh items while preserving confirmation list
         agreement.items = items
         agreement.excluded_items = excluded_items
-        db.commit()
-        db.refresh(agreement)
 
+    db.commit()
+    db.refresh(agreement)
     return agreement
 
 
@@ -102,8 +91,7 @@ def confirm_agreement(
     session_id: str,
     payload: AgreementConfirmPayload,
     db: Session = Depends(get_db),
-) -> Any:
-    """Record a participant's explicit confirmation of the shared agreement checklist."""
+) -> AgreementModel:
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(
@@ -111,7 +99,6 @@ def confirm_agreement(
             detail=f"Session '{session_id}' not found.",
         )
 
-    # Ensure participant belongs to session
     participant_ids = {p.participant_id for p in session.participants}
     if payload.participant_id not in participant_ids:
         raise HTTPException(
@@ -123,20 +110,13 @@ def confirm_agreement(
         db.query(AgreementModel).filter(AgreementModel.session_id == session_id).first()
     )
     if not agreement:
-        # Trigger compilation first
-        get_or_compile_agreement(session_id=session_id, db=db)
-        agreement = (
-            db.query(AgreementModel)
-            .filter(AgreementModel.session_id == session_id)
-            .first()
-        )
+        agreement = get_or_compile_agreement(session_id=session_id, db=db)
 
     confirmed_list = list(agreement.confirmed_by or [])
     if payload.participant_id not in confirmed_list:
         confirmed_list.append(payload.participant_id)
         agreement.confirmed_by = confirmed_list
 
-    # Fully confirmed if all participants have confirmed
     all_participants = {p.participant_id for p in session.participants}
     agreement.is_fully_confirmed = all_participants.issubset(set(confirmed_list))
 
@@ -153,8 +133,7 @@ def confirm_agreement(
 def get_bridge_test_metrics(
     session_id: str,
     db: Session = Depends(get_db),
-) -> Any:
-    """Compute the Bridge Test metrics: before vs after comparison from persisted data."""
+) -> BridgeTestResponse:
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(
@@ -204,8 +183,4 @@ def get_bridge_test_metrics(
         confirmed_participants=confirmed_participants,
         total_participants=len(session.participants),
         bridge_status=bridge_status,
-        disclaimer=(
-            "This metric reflects the resolution of identified differences among participants, "
-            "not proof of universal understanding."
-        ),
     )

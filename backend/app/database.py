@@ -1,6 +1,3 @@
-"""Database setup and session management using SQLAlchemy.
-"""
-
 from typing import Generator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
@@ -28,7 +25,6 @@ Base = declarative_base()
 
 
 def get_db() -> Generator[Session, None, None]:
-    """FastAPI dependency that yields a database session and closes it afterwards."""
     db = SessionLocal()
     try:
         yield db
@@ -37,6 +33,5 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    """Create all database tables defined in models."""
-    import backend.app.models  # Ensure models are imported so Base.metadata knows about them
+    import backend.app.models
     Base.metadata.create_all(bind=engine)

@@ -1,15 +1,8 @@
-"""Core analysis orchestrator for MISUNDERSTOOD.
-
-Coordinates input validation, deterministic short-circuits, prompt building,
-LLM communication, zero-hallucination evidence validation, and output packaging.
-"""
-
 from typing import Any, Optional
 from pydantic import ValidationError
 
 from backend.ai.client import (
     AIClientError,
-    AIMalformedJSONError,
     LLMClient,
 )
 from backend.ai.prompts import build_system_prompt, build_user_prompt
@@ -34,21 +27,6 @@ async def analyze_interpretations(
     participants: list[dict],
     client: Optional[LLMClient] = None,
 ) -> dict[str, Any]:
-    """Analyze multi-participant interpretations of a shared task.
-
-    Args:
-        task: Dictionary with 'title' and optional 'description'.
-        participants: List of dictionaries with 'participant_id', 'interpretation',
-                      and optional 'assumptions' and 'success_criteria'.
-        client: Optional injected LLMClient instance (useful for unit testing/mocking).
-
-    Returns:
-        A validated dictionary conforming to the AnalysisResult schema.
-        Never raises unhandled exceptions to the caller.
-    """
-    # -------------------------------------------------------------------------
-    # 1. Input Validation
-    # -------------------------------------------------------------------------
     try:
         validated_task = TaskInput.model_validate(task)
     except ValidationError as exc:
@@ -80,9 +58,6 @@ async def analyze_interpretations(
                 metadata={"validation_error": "participant", "index": idx},
             ).model_dump(mode="json")
 
-    # -------------------------------------------------------------------------
-    # 2. Short-Circuit: Insufficient Participants (< 2)
-    # -------------------------------------------------------------------------
     count = len(validated_participants)
     if count == 0:
         return AnalysisResult(
@@ -101,9 +76,6 @@ async def analyze_interpretations(
             metadata={"participant_count": 1, "bypassed_llm": True},
         ).model_dump(mode="json")
 
-    # -------------------------------------------------------------------------
-    # 3. Short-Circuit: Identical Responses Check
-    # -------------------------------------------------------------------------
     first_text = normalize_whitespace(validated_participants[0].interpretation)
     all_identical = all(
         normalize_whitespace(p.interpretation) == first_text
@@ -115,8 +87,8 @@ async def analyze_interpretations(
     )
 
     if all_identical and len(first_text) > 0:
-        # If participants provided completely identical text, we can safely report consensus
-        # without hallucinating conflicts, while noting that implicit assumptions may remain.
+        # If participants provided completely identical text, report clean consensus
+        # while noting unstated background assumptions may still exist
         return AnalysisResult(
             status=AnalysisStatus.COMPLETED,
             summary=(
@@ -130,9 +102,6 @@ async def analyze_interpretations(
             metadata={"participant_count": count, "identical_inputs": True},
         ).model_dump(mode="json")
 
-    # -------------------------------------------------------------------------
-    # 4. LLM Generation
-    # -------------------------------------------------------------------------
     llm = client or LLMClient()
     system_prompt = build_system_prompt()
     user_prompt = build_user_prompt(validated_task, validated_participants)
@@ -152,7 +121,7 @@ async def analyze_interpretations(
                 "error_type": type(exc).__name__,
             },
         ).model_dump(mode="json")
-    except Exception as exc:  # Catch any unforeseen runtime errors safely
+    except Exception as exc:
         return AnalysisResult(
             status=AnalysisStatus.FAILED,
             summary="Unexpected error during AI analysis.",
@@ -164,9 +133,6 @@ async def analyze_interpretations(
             },
         ).model_dump(mode="json")
 
-    # -------------------------------------------------------------------------
-    # 5. Parse Candidate Output
-    # -------------------------------------------------------------------------
     summary = raw_output.get("summary", "Analysis completed.")
     if not isinstance(summary, str) or not summary.strip():
         summary = "Analysis completed."
@@ -179,7 +145,6 @@ async def analyze_interpretations(
                 try:
                     candidate_issues.append(Issue.model_validate(raw_iss))
                 except ValidationError:
-                    # Drop candidate issue if model returned malformed schema for this item
                     continue
 
     candidate_complements: list[ComplementaryPerspective] = []
@@ -194,14 +159,10 @@ async def analyze_interpretations(
                 except ValidationError:
                     continue
 
-    # -------------------------------------------------------------------------
-    # 6. Deterministic Evidence Validation (Zero-Hallucination Guard)
-    # -------------------------------------------------------------------------
     validator = EvidenceValidator(validated_participants)
     verified_issues, dropped_quotes_iss, issue_rejections = (
         validator.validate_issues(candidate_issues)
     )
-    # Deduplicate issues: retain distinct decisions, eliminate redundant restatements
     verified_issues, dedup_reasons = deduplicate_issues(verified_issues)
     issue_rejections.extend(dedup_reasons)
 
@@ -213,9 +174,7 @@ async def analyze_interpretations(
     total_candidate_findings = len(candidate_issues) + len(candidate_complements)
     total_verified_findings = len(verified_issues) + len(verified_complements)
 
-    # Safety Guard: If the model proposed findings, but EVERY finding was rejected
-    # by evidence validation, do NOT report status=COMPLETED with 0 issues (which falsely
-    # communicates consensus). Instead, flag status=FAILED with clear diagnostics.
+    # If the model proposed findings but every quote failed verification, do not falsely report consensus
     if total_candidate_findings > 0 and total_verified_findings == 0:
         return AnalysisResult(
             status=AnalysisStatus.FAILED,
@@ -237,12 +196,8 @@ async def analyze_interpretations(
             },
         ).model_dump(mode="json")
 
-    # -------------------------------------------------------------------------
-    # 7. Compute Objective Issue Metrics
-    # -------------------------------------------------------------------------
     by_type: dict[str, int] = {}
     by_priority: dict[str, int] = {}
-
     for iss in verified_issues:
         t_val = iss.type.value
         p_val = iss.priority.value
@@ -255,10 +210,7 @@ async def analyze_interpretations(
         by_priority=by_priority,
     )
 
-    # -------------------------------------------------------------------------
-    # 8. Assemble Final Result
-    # -------------------------------------------------------------------------
-    final_result = AnalysisResult(
+    return AnalysisResult(
         status=AnalysisStatus.COMPLETED,
         summary=summary,
         issues=verified_issues,
@@ -274,6 +226,4 @@ async def analyze_interpretations(
             "deduplicated_issue_count": len(dedup_reasons),
             "rejection_reasons": issue_rejections,
         },
-    )
-
-    return final_result.model_dump(mode="json")
+    ).model_dump(mode="json")

@@ -1,6 +1,3 @@
-"""Analysis orchestration service connecting FastAPI sessions to the AI/ML module.
-"""
-
 from typing import Any, Callable, Optional
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -10,23 +7,33 @@ from backend.app.models import AnalysisModel, IssueModel, SessionModel
 from backend.app.schemas import AnalysisResponse, IssueRead
 
 
+def _record_analysis_failure(
+    session: SessionModel,
+    db: Session,
+    status_str: str,
+    summary: str,
+    error_message: Optional[str] = None,
+    metadata_info: Optional[dict[str, Any]] = None,
+) -> None:
+    session.status = status_str
+    record = AnalysisModel(
+        session_id=session.id,
+        status=status_str,
+        summary=summary,
+        error_message=error_message,
+        issue_counts={},
+        complementary_perspectives=[],
+        metadata_info=metadata_info or {},
+    )
+    db.add(record)
+    db.commit()
+
+
 async def execute_session_analysis(
     session_id: str,
     db: Session,
     ai_analyzer_fn: Optional[Callable] = None,
 ) -> AnalysisResponse:
-    """Orchestrate AI task interpretation analysis for a persisted session.
-
-    Enforces session lifecycle rules:
-    1. Validates session existence.
-    2. Prevents premature analysis (requires at least 2 participant submissions).
-    3. Prevents duplicate concurrent analysis requests.
-    4. Constructs inputs strictly from persisted records without inventing content.
-    5. Dispatches to AI analysis component.
-    6. Persists analysis snapshots and individual findings with idempotency.
-    7. Preserves human resolution decisions ("resolved" / "dismissed") across re-analyses.
-    """
-    # 1. Fetch and validate session
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(
@@ -34,14 +41,13 @@ async def execute_session_analysis(
             detail=f"Session '{session_id}' not found.",
         )
 
-    # 2. Concurrency guard: prevent concurrent duplicate runs
+    # Concurrency guard: avoid duplicate concurrent analyses on the same session
     if session.status == "analyzing":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Analysis is already in progress for this session.",
         )
 
-    # 3. Lifecycle guard: verify required participant submissions
     valid_participants = [
         p
         for p in session.participants
@@ -56,92 +62,75 @@ async def execute_session_analysis(
             ),
         )
 
-    # Set state to analyzing to lock concurrent requests
     session.status = "analyzing"
     db.commit()
 
-    # 4. Construct AI input strictly from persisted records
-    task_input: dict[str, Any] = {"title": session.title}
+    # Build input strictly from persisted submissions without inventing fields
+    task_payload: dict[str, Any] = {"title": session.title}
     if session.description and session.description.strip():
-        task_input["description"] = session.description.strip()
+        task_payload["description"] = session.description.strip()
 
-    participants_input: list[dict[str, Any]] = []
+    participants_payload: list[dict[str, Any]] = []
     for p in valid_participants:
-        p_dict: dict[str, Any] = {
+        entry: dict[str, Any] = {
             "participant_id": p.participant_id,
             "interpretation": p.interpretation.strip(),
         }
         if p.assumptions and p.assumptions.strip():
-            p_dict["assumptions"] = p.assumptions.strip()
+            entry["assumptions"] = p.assumptions.strip()
         if p.success_criteria and p.success_criteria.strip():
-            p_dict["success_criteria"] = p.success_criteria.strip()
-        participants_input.append(p_dict)
+            entry["success_criteria"] = p.success_criteria.strip()
+        participants_payload.append(entry)
 
-    # 5. Dispatch to AI module
-    analyzer_callable = ai_analyzer_fn or analyze_interpretations
+    analyzer = ai_analyzer_fn or analyze_interpretations
     try:
-        raw_result = await analyzer_callable(
-            task=task_input,
-            participants=participants_input,
+        raw_result = await analyzer(
+            task=task_payload,
+            participants=participants_payload,
         )
     except Exception as exc:
-        session.status = "failed"
-        failed_analysis = AnalysisModel(
-            session_id=session.id,
-            status="failed",
+        _record_analysis_failure(
+            session=session,
+            db=db,
+            status_str="failed",
             summary="Analysis failed due to unexpected runtime error.",
             error_message=f"Runtime error: {str(exc)}",
-            issue_counts={},
-            complementary_perspectives=[],
             metadata_info={"error_type": type(exc).__name__},
         )
-        db.add(failed_analysis)
-        db.commit()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error executing AI analysis: {str(exc)}",
         ) from exc
 
-    # 6. Handle AI Result Outcomes
     ai_status = raw_result.get("status")
 
     if ai_status == "failed":
-        session.status = "failed"
-        failed_analysis = AnalysisModel(
-            session_id=session.id,
-            status="failed",
+        _record_analysis_failure(
+            session=session,
+            db=db,
+            status_str="failed",
             summary=raw_result.get("summary", "Analysis failed."),
             error_message=raw_result.get("error_message", "Unknown provider failure."),
-            issue_counts=raw_result.get("issue_counts", {}),
-            complementary_perspectives=raw_result.get("complementary_perspectives", []),
             metadata_info=raw_result.get("metadata", {}),
         )
-        db.add(failed_analysis)
-        db.commit()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"AI analysis failed: {raw_result.get('error_message')}",
         )
 
     if ai_status == "insufficient_data":
-        session.status = "insufficient_data"
-        insuf_analysis = AnalysisModel(
-            session_id=session.id,
-            status="insufficient_data",
+        _record_analysis_failure(
+            session=session,
+            db=db,
+            status_str="insufficient_data",
             summary=raw_result.get("summary", "Insufficient participant submissions."),
-            error_message=None,
-            issue_counts={},
-            complementary_perspectives=[],
             metadata_info=raw_result.get("metadata", {}),
         )
-        db.add(insuf_analysis)
-        db.commit()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=raw_result.get("summary", "Insufficient participant submissions."),
         )
 
-    # 7. Persist Successful Analysis Run ("completed")
     analysis_record = AnalysisModel(
         session_id=session.id,
         status="completed",
@@ -152,9 +141,9 @@ async def execute_session_analysis(
         metadata_info=raw_result.get("metadata", {}),
     )
     db.add(analysis_record)
-    db.flush()  # Generates analysis_record.id
+    db.flush()
 
-    # 8. Re-run Policy: Update issues without losing team resolution decisions
+    # Re-run Policy: Synchronize issues while preserving human resolution decisions
     existing_issues = (
         db.query(IssueModel).filter(IssueModel.session_id == session.id).all()
     )
@@ -179,7 +168,6 @@ async def execute_session_analysis(
         key = (iss_type.lower(), iss_title.lower())
         current_keys.add(key)
 
-        # Normalize evidence to plain dictionaries
         evidence_list = []
         for ev in raw_iss.get("evidence", []):
             if hasattr(ev, "model_dump"):
@@ -188,19 +176,17 @@ async def execute_session_analysis(
                 evidence_list.append(ev)
 
         if key in existing_by_key:
-            # Existing issue: update AI findings, PRESERVE user resolution status & notes!
-            existing_iss = existing_by_key[key]
-            existing_iss.analysis_id = analysis_record.id
-            existing_iss.description = raw_iss["description"]
-            existing_iss.evidence = evidence_list
-            existing_iss.impact = raw_iss["impact"]
-            existing_iss.priority = iss_priority
-            existing_iss.confidence = float(raw_iss["confidence"])
-            existing_iss.clarification_question = raw_iss["clarification_question"]
-            # resolution_status and resolution_notes are intentionally preserved!
+            # Refresh AI metadata but preserve human resolution_status and resolution_notes
+            existing = existing_by_key[key]
+            existing.analysis_id = analysis_record.id
+            existing.description = raw_iss["description"]
+            existing.evidence = evidence_list
+            existing.impact = raw_iss["impact"]
+            existing.priority = iss_priority
+            existing.confidence = float(raw_iss["confidence"])
+            existing.clarification_question = raw_iss["clarification_question"]
         else:
-            # Brand new issue: insert as "open"
-            new_iss = IssueModel(
+            new_issue = IssueModel(
                 session_id=session.id,
                 analysis_id=analysis_record.id,
                 type=iss_type,
@@ -214,18 +200,16 @@ async def execute_session_analysis(
                 resolution_status="open",
                 resolution_notes=None,
             )
-            db.add(new_iss)
+            db.add(new_issue)
 
-    # Prune stale open issues no longer detected in the new analysis
-    for key, existing_iss in existing_by_key.items():
-        if key not in current_keys and existing_iss.resolution_status == "open":
-            db.delete(existing_iss)
+    # Prune stale open issues no longer detected in the refreshed analysis
+    for key, existing in existing_by_key.items():
+        if key not in current_keys and existing.resolution_status == "open":
+            db.delete(existing)
 
-    # Update session status to completed
     session.status = "completed"
     db.commit()
 
-    # 9. Assemble and return response
     all_current_issues = (
         db.query(IssueModel)
         .filter(IssueModel.session_id == session.id)
