@@ -16,68 +16,55 @@ import {
   XCircle,
   HelpCircle,
   Users,
-  Sparkles,
-  ArrowRight,
-  ShieldAlert,
-  Layers,
-  CheckSquare,
-  RefreshCw,
   Copy,
   ChevronDown,
   ChevronUp,
-  Award,
 } from 'lucide-react';
 
 export default function App() {
-  // Session & UI state
   const [session, setSession] = useState(null);
   const [sessionId, setSessionId] = useState(() => localStorage.getItem('misunderstood_session_id') || '');
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [activeTab, setActiveTab] = useState('create'); // 'create', 'join'
+  const [activeTab, setActiveTab] = useState('create');
 
-  // Form states
+  // New session inputs
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDesc, setTaskDesc] = useState('');
   const [joinCodeInput, setJoinCodeInput] = useState('');
 
-  // Participant form
+  // Participant submission inputs
   const [participantName, setParticipantName] = useState('');
   const [participantId, setParticipantId] = useState('');
   const [interpretation, setInterpretation] = useState('');
   const [assumptions, setAssumptions] = useState('');
   const [successCriteria, setSuccessCriteria] = useState('');
 
-  // Analysis & Issues state
-  const [analysisResult, setAnalysisResult] = useState(null);
+  // Results & Agreement state
   const [issues, setIssues] = useState([]);
-  const [issueFilter, setIssueFilter] = useState('all'); // 'all', 'open', 'resolved', 'dismissed'
+  const [issueFilter, setIssueFilter] = useState('all');
   const [expandedEvidence, setExpandedEvidence] = useState({});
-
-  // Agreement & Bridge Test state
   const [agreement, setAgreement] = useState(null);
   const [bridgeTest, setBridgeTest] = useState(null);
   const [confirmingParticipant, setConfirmingParticipant] = useState('');
   const [resolvingIssueId, setResolvingIssueId] = useState(null);
   const [resolutionNotes, setResolutionNotes] = useState('');
 
-  // Load session on startup if stored
   useEffect(() => {
     if (sessionId) {
-      loadSessionData(sessionId);
+      loadSession(sessionId);
     }
   }, [sessionId]);
 
-  const loadSessionData = async (id) => {
+  const loadSession = async (id) => {
     try {
       setLoading(true);
       setErrorMessage('');
-      const sessionData = await getSession(id);
-      setSession(sessionData);
+      const data = await getSession(id);
+      setSession(data);
 
-      // Load issues if session completed
-      if (sessionData.status === 'completed') {
+      if (data.status === 'completed') {
         const issuesData = await getIssues(id);
         setIssues(issuesData);
         const agreementData = await getAgreement(id).catch(() => null);
@@ -86,7 +73,6 @@ export default function App() {
         setBridgeTest(bridgeData);
       }
     } catch (err) {
-      console.error('Failed to load session:', err);
       setErrorMessage(err.message || 'Could not load session.');
     } finally {
       setLoading(false);
@@ -113,12 +99,11 @@ export default function App() {
     }
   };
 
-  const handleLoadDemoScenario = async () => {
+  const handleLoadDemo = async () => {
     try {
       setLoading(true);
       setErrorMessage('');
 
-      // 1. Create Hackathon Demo Session
       const demoSession = await createSession(
         'Prepare the application for launch',
         'Finish essential functionality and verify release readiness before product launch.'
@@ -127,7 +112,6 @@ export default function App() {
       setSessionId(demoSession.id);
       localStorage.setItem('misunderstood_session_id', demoSession.id);
 
-      // 2. Add Developer (Participant A)
       await submitParticipant(demoSession.id, {
         participant_id: 'participant-a',
         name: 'Alex (Lead Developer)',
@@ -136,7 +120,6 @@ export default function App() {
         success_criteria: 'Unit tests pass and auth API returns 200.',
       });
 
-      // 3. Add Project Manager (Participant B)
       await submitParticipant(demoSession.id, {
         participant_id: 'participant-b',
         name: 'Jordan (Project Manager)',
@@ -145,7 +128,6 @@ export default function App() {
         success_criteria: 'Users can sign up, log in with phone or email, and reset passwords without support tickets.',
       });
 
-      // 4. Add Designer (Participant C)
       await submitParticipant(demoSession.id, {
         participant_id: 'participant-c',
         name: 'Taylor (Product Designer)',
@@ -154,8 +136,7 @@ export default function App() {
         success_criteria: 'Onboarding walkthrough displays on first login with 100% responsive styling.',
       });
 
-      // Refresh session
-      await loadSessionData(demoSession.id);
+      await loadSession(demoSession.id);
     } catch (err) {
       setErrorMessage(err.message || 'Failed to initialize demo scenario.');
     } finally {
@@ -188,7 +169,7 @@ export default function App() {
       setAssumptions('');
       setSuccessCriteria('');
 
-      await loadSessionData(session.id);
+      await loadSession(session.id);
     } catch (err) {
       setErrorMessage(err.message || 'Failed to submit interpretation.');
     } finally {
@@ -198,24 +179,20 @@ export default function App() {
 
   const handleRunAnalysis = async () => {
     if (!session) return;
-
     try {
       setAnalyzing(true);
       setErrorMessage('');
       const result = await triggerAnalysis(session.id);
-      setAnalysisResult(result);
       setIssues(result.issues || []);
 
-      // Load agreement and bridge metrics
       const agreementData = await getAgreement(session.id).catch(() => null);
       setAgreement(agreementData);
       const bridgeData = await getBridgeTest(session.id).catch(() => null);
       setBridgeTest(bridgeData);
 
-      await loadSessionData(session.id);
+      await loadSession(session.id);
     } catch (err) {
-      console.error('Analysis failed:', err);
-      setErrorMessage(err.message || 'AI Analysis failed. Please check participant submissions and try again.');
+      setErrorMessage(err.message || 'AI analysis failed. Please verify submissions and retry.');
     } finally {
       setAnalyzing(false);
     }
@@ -228,7 +205,6 @@ export default function App() {
       setResolvingIssueId(null);
       setResolutionNotes('');
 
-      // Refresh issues, agreement, and bridge test
       const updatedIssues = await getIssues(session.id);
       setIssues(updatedIssues);
       const updatedAgreement = await getAgreement(session.id);
@@ -236,15 +212,15 @@ export default function App() {
       const updatedBridge = await getBridgeTest(session.id);
       setBridgeTest(updatedBridge);
     } catch (err) {
-      setErrorMessage(err.message || 'Failed to update issue status.');
+      setErrorMessage(err.message || 'Failed to update issue.');
     }
   };
 
   const handleConfirmAgreement = async () => {
-    if (!session || !confirmingParticipant) return;
+    if (!session || !confirmingParticipant.trim()) return;
     try {
-      const updatedAg = await confirmAgreement(session.id, confirmingParticipant);
-      setAgreement(updatedAg);
+      const updated = await confirmAgreement(session.id, confirmingParticipant.trim());
+      setAgreement(updated);
       const updatedBridge = await getBridgeTest(session.id);
       setBridgeTest(updatedBridge);
       setConfirmingParticipant('');
@@ -260,7 +236,6 @@ export default function App() {
     setIssues([]);
     setAgreement(null);
     setBridgeTest(null);
-    setAnalysisResult(null);
     setErrorMessage('');
   };
 
@@ -278,43 +253,39 @@ export default function App() {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      {/* Header */}
       <header className="header-nav">
         <div className="header-content">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            <span style={{ fontSize: '1.75rem' }}>🌉</span>
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <h1 style={{ fontSize: '1.25rem', fontWeight: 800, letterSpacing: '-0.025em' }}>
-                  MISUNDERSTOOD
-                </h1>
-                <span className="badge" style={{ background: 'rgba(139, 92, 246, 0.2)', color: '#c4b5fd', border: '1px solid rgba(139, 92, 246, 0.4)' }}>
-                  Theme: Bridge the Gap
-                </span>
-              </div>
-              <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
-                Same conversation. Different realities.
-              </p>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
+              <h1 style={{ fontSize: '1.125rem', fontWeight: 700, letterSpacing: '-0.01em' }}>
+                MISUNDERSTOOD
+              </h1>
+              <span className="badge" style={{ background: '#252a3b', color: '#94a3b8' }}>
+                Bridge the Gap
+              </span>
             </div>
+            <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+              Same conversation. Different realities.
+            </p>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
             {session && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-surface-elevated)', padding: '0.375rem 0.75rem', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '0.8125rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', background: 'var(--bg-primary)', padding: '0.35rem 0.625rem', borderRadius: '4px', border: '1px solid var(--border)', fontSize: '0.8125rem' }}>
                 <span style={{ color: 'var(--text-secondary)' }}>Code:</span>
-                <strong style={{ color: 'var(--accent-cyan)', fontFamily: 'monospace' }}>{session.session_code}</strong>
+                <strong style={{ color: '#38bdf8', fontFamily: 'monospace' }}>{session.session_code}</strong>
                 <button
                   type="button"
                   onClick={() => navigator.clipboard.writeText(session.session_code)}
-                  title="Copy code"
-                  style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '2px' }}
+                  title="Copy session code"
+                  style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '2px', display: 'flex' }}
                 >
                   <Copy size={13} />
                 </button>
               </div>
             )}
             {session && (
-              <button type="button" onClick={handleResetSession} className="btn btn-secondary" style={{ padding: '0.375rem 0.75rem', fontSize: '0.8125rem' }}>
+              <button type="button" onClick={handleResetSession} className="btn btn-secondary" style={{ padding: '0.35rem 0.75rem', fontSize: '0.8125rem' }}>
                 New Session
               </button>
             )}
@@ -322,38 +293,30 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="container" style={{ flex: 1, paddingBottom: '3rem' }}>
-        {/* Error Banner */}
         {errorMessage && (
-          <div style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#fca5a5', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-            <AlertTriangle size={20} style={{ flexShrink: 0, marginTop: '2px' }} />
-            <div style={{ flex: 1 }}>
-              <strong style={{ display: 'block', marginBottom: '0.25rem' }}>Attention:</strong>
-              <span>{errorMessage}</span>
-            </div>
-            <button type="button" onClick={() => setErrorMessage('')} style={{ background: 'transparent', border: 'none', color: '#fca5a5', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
+          <div style={{ background: '#451a1a', border: '1px solid #7f1d1d', color: '#fca5a5', padding: '0.875rem 1rem', borderRadius: '6px', marginBottom: '1.25rem', display: 'flex', alignItems: 'flex-start', gap: '0.625rem' }}>
+            <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: '2px' }} />
+            <div style={{ flex: 1, fontSize: '0.875rem' }}>{errorMessage}</div>
+            <button type="button" onClick={() => setErrorMessage('')} style={{ background: 'transparent', border: 'none', color: '#fca5a5', cursor: 'pointer' }}>✕</button>
           </div>
         )}
 
         {!session ? (
-          /* ================================================================ */
-          /* STAGE 1: CREATE OR JOIN SESSION                                  */
-          /* ================================================================ */
-          <div style={{ maxWidth: '680px', margin: '2rem auto' }}>
-            <div className="card" style={{ marginBottom: '1.5rem' }}>
-              <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--border)', marginBottom: '1.5rem', paddingBottom: '0.75rem' }}>
+          <div style={{ maxWidth: '640px', margin: '2rem auto' }}>
+            <div className="card">
+              <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--border)', marginBottom: '1.25rem', paddingBottom: '0.5rem' }}>
                 <button
                   type="button"
                   onClick={() => setActiveTab('create')}
-                  style={{ background: 'transparent', border: 'none', color: activeTab === 'create' ? 'var(--primary)' : 'var(--text-secondary)', fontWeight: 700, paddingBottom: '0.5rem', borderBottom: activeTab === 'create' ? '2px solid var(--primary)' : 'none', cursor: 'pointer' }}
+                  style={{ background: 'transparent', border: 'none', color: activeTab === 'create' ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: 600, paddingBottom: '0.5rem', borderBottom: activeTab === 'create' ? '2px solid var(--primary)' : 'none', cursor: 'pointer' }}
                 >
                   Create Task Session
                 </button>
                 <button
                   type="button"
                   onClick={() => setActiveTab('join')}
-                  style={{ background: 'transparent', border: 'none', color: activeTab === 'join' ? 'var(--primary)' : 'var(--text-secondary)', fontWeight: 700, paddingBottom: '0.5rem', borderBottom: activeTab === 'join' ? '2px solid var(--primary)' : 'none', cursor: 'pointer' }}
+                  style={{ background: 'transparent', border: 'none', color: activeTab === 'join' ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: 600, paddingBottom: '0.5rem', borderBottom: activeTab === 'join' ? '2px solid var(--primary)' : 'none', cursor: 'pointer' }}
                 >
                   Join with Code
                 </button>
@@ -362,7 +325,7 @@ export default function App() {
               {activeTab === 'create' ? (
                 <form onSubmit={handleCreateSession}>
                   <div className="form-group">
-                    <label className="form-label" htmlFor="task-title">Task Instruction / Statement *</label>
+                    <label className="form-label" htmlFor="task-title">Task Instruction *</label>
                     <input
                       id="task-title"
                       type="text"
@@ -375,26 +338,25 @@ export default function App() {
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label" htmlFor="task-desc">Context or Technical Details (Optional)</label>
+                    <label className="form-label" htmlFor="task-desc">Context or Details (Optional)</label>
                     <textarea
                       id="task-desc"
                       className="form-textarea"
                       rows={3}
-                      placeholder="e.g. Milestone 1 scope, auth requirements, deadline, constraints..."
+                      placeholder="e.g. Target milestone, known constraints, deliverables..."
                       value={taskDesc}
                       onChange={(e) => setTaskDesc(e.target.value)}
                     />
                   </div>
 
-                  <button type="submit" disabled={loading || !taskTitle.trim()} className="btn btn-primary" style={{ width: '100%', marginBottom: '1rem' }}>
-                    {loading ? <span className="spinner" /> : <ArrowRight size={16} />}
-                    Create Collaboration Session
+                  <button type="submit" disabled={loading || !taskTitle.trim()} className="btn btn-primary" style={{ width: '100%' }}>
+                    {loading ? <span className="spinner" /> : 'Create Session'}
                   </button>
                 </form>
               ) : (
                 <div>
                   <div className="form-group">
-                    <label className="form-label" htmlFor="join-code">Enter 6-Character Session Code</label>
+                    <label className="form-label" htmlFor="join-code">Session Code</label>
                     <input
                       id="join-code"
                       type="text"
@@ -407,7 +369,7 @@ export default function App() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => setErrorMessage('For demonstration, please create a session or click the One-Click Demo button below.')}
+                    onClick={() => setErrorMessage('For demonstration, create a session or load the demo scenario below.')}
                     className="btn btn-secondary"
                     style={{ width: '100%' }}
                   >
@@ -416,77 +378,68 @@ export default function App() {
                 </div>
               )}
 
-              {/* Devlympics Hackathon Preset Demo Button */}
-              <div style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+              <div style={{ marginTop: '1.25rem', paddingTop: '1.25rem', borderTop: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                   <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
-                    🏆 HACKATHON EVALUATION PRESET
+                    Preset Scenario
                   </span>
-                  <span className="badge" style={{ background: 'rgba(234, 179, 8, 0.2)', color: '#fde047' }}>
-                    Instant Demo
+                  <span className="badge" style={{ background: '#252a3b', color: '#94a3b8' }}>
+                    3 Participants
                   </span>
                 </div>
-                <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
-                  Instantly spins up the official scenario: <em>"Prepare application for launch"</em> pre-loaded with Developer, PM, and Designer responses.
+                <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+                  Loads the scenario <em>"Prepare the application for launch"</em> with pre-configured Developer, Project Manager, and Designer submissions.
                 </p>
                 <button
                   type="button"
-                  onClick={handleLoadDemoScenario}
+                  onClick={handleLoadDemo}
                   disabled={loading}
                   className="btn btn-secondary"
-                  style={{ width: '100%', borderColor: '#8b5cf6', color: '#c4b5fd', background: 'rgba(139, 92, 246, 0.1)' }}
+                  style={{ width: '100%' }}
                 >
-                  <Sparkles size={16} />
-                  Load Official 3-Party Demo Scenario
+                  Load Official 3-Party Demo
                 </button>
               </div>
             </div>
           </div>
         ) : (
-          /* ================================================================ */
-          /* STAGE 2-6: ACTIVE SESSION WORKFLOW                               */
-          /* ================================================================ */
           <div>
-            {/* Session Header Card */}
-            <div className="card" style={{ marginBottom: '1.5rem', position: 'relative' }}>
+            <div className="card" style={{ marginBottom: '1.25rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
                 <div style={{ flex: 1, minWidth: '280px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem' }}>
                     <span className={`badge badge-${session.status === 'completed' ? 'resolved' : session.status === 'failed' ? 'critical' : 'open'}`}>
-                      Status: {session.status.toUpperCase()}
+                      {session.status}
                     </span>
                     <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
-                      {session.participant_count} Participant(s) Joined
+                      {session.participant_count} participant(s)
                     </span>
                   </div>
-                  <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '0.375rem' }}>
+                  <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.25rem' }}>
                     {session.title}
                   </h2>
                   {session.description && (
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.9375rem' }}>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
                       {session.description}
                     </p>
                   )}
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem', alignItems: 'flex-end' }}>
                   <button
                     type="button"
                     onClick={handleRunAnalysis}
                     disabled={analyzing || (session.participant_count || 0) < 2}
                     className="btn btn-primary"
-                    style={{ minWidth: '180px' }}
+                    style={{ minWidth: '160px' }}
                   >
                     {analyzing ? (
                       <>
                         <span className="spinner" />
-                        Analyzing with AI...
+                        Analyzing...
                       </>
                     ) : (
-                      <>
-                        <Sparkles size={16} />
-                        {issues.length > 0 ? 'Re-run AI Analysis' : 'Run AI Analysis'}
-                      </>
+                      issues.length > 0 ? 'Re-run Analysis' : 'Run AI Analysis'
                     )}
                   </button>
                   {(session.participant_count || 0) < 2 && (
@@ -497,54 +450,48 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Progress Indicator */}
               {analyzing && (
-                <div style={{ marginTop: '1.25rem', padding: '0.875rem', background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#172b4d', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
                   <span className="spinner" />
-                  <span style={{ fontSize: '0.875rem', color: '#93c5fd' }}>
-                    Objective mediator active: Comparing interpretations, verifying verbatim evidence, and detecting divergence...
+                  <span style={{ fontSize: '0.8125rem', color: '#93c5fd' }}>
+                    Analyzing participant interpretations and validating evidence...
                   </span>
                 </div>
               )}
             </div>
 
-            {/* Layout Grid: Left = Submissions / Right = Misunderstanding Map & Bridge Test */}
-            <div style={{ display: 'grid', gridTemplateColumns: issues.length > 0 ? '1fr 1.6fr' : '1fr', gap: '1.5rem' }}>
-              {/* Left Column: Participant Submissions */}
+            <div style={{ display: 'grid', gridTemplateColumns: issues.length > 0 ? '1fr 1.6fr' : '1fr', gap: '1.25rem' }}>
               <div>
-                <div className="card" style={{ marginBottom: '1.5rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                    <Users size={18} style={{ color: 'var(--primary)' }} />
-                    <h3 style={{ fontSize: '1.125rem', fontWeight: 700 }}>Independent Submissions</h3>
+                <div className="card">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                    <Users size={16} style={{ color: 'var(--primary)' }} />
+                    <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>Independent Submissions</h3>
                   </div>
 
-                  <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)', padding: '0.75rem', borderRadius: '8px', fontSize: '0.8125rem', color: '#93c5fd', marginBottom: '1.25rem', display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
-                    <ShieldAlert size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
-                    <span>
-                      <strong>Blind Submission Mode:</strong> Participants cannot view other answers before submitting to prevent anchoring bias.
-                    </span>
+                  <div style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', padding: '0.625rem 0.75rem', borderRadius: '6px', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+                    <strong>Blind submission:</strong> Participants submit independently to prevent bias.
                   </div>
 
                   <form onSubmit={handleSubmitInterpretation}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.625rem' }}>
                       <div className="form-group">
                         <label className="form-label" htmlFor="participant-name">Your Name</label>
                         <input
                           id="participant-name"
                           type="text"
                           className="form-input"
-                          placeholder="e.g. Morgan"
+                          placeholder="e.g. Alex"
                           value={participantName}
                           onChange={(e) => setParticipantName(e.target.value)}
                         />
                       </div>
                       <div className="form-group">
-                        <label className="form-label" htmlFor="participant-id">Participant ID / Role</label>
+                        <label className="form-label" htmlFor="participant-id">Role / Identifier</label>
                         <input
                           id="participant-id"
                           type="text"
                           className="form-input"
-                          placeholder="e.g. dev-frontend"
+                          placeholder="e.g. dev-lead"
                           value={participantId}
                           onChange={(e) => setParticipantId(e.target.value)}
                         />
@@ -553,13 +500,13 @@ export default function App() {
 
                     <div className="form-group">
                       <label className="form-label" htmlFor="participant-interpretation">
-                        What does this task require? (In your own words) *
+                        Task Interpretation *
                       </label>
                       <textarea
                         id="participant-interpretation"
                         className="form-textarea"
                         rows={3}
-                        placeholder="Explain what must be finished for this task to count as complete..."
+                        placeholder="What needs to be done for this task to be complete?"
                         value={interpretation}
                         onChange={(e) => setInterpretation(e.target.value)}
                         required
@@ -567,24 +514,24 @@ export default function App() {
                     </div>
 
                     <div className="form-group">
-                      <label className="form-label" htmlFor="participant-assumptions">What assumptions are you making? (Optional)</label>
+                      <label className="form-label" htmlFor="participant-assumptions">Assumptions (Optional)</label>
                       <input
                         id="participant-assumptions"
                         type="text"
                         className="form-input"
-                        placeholder="e.g. DB schema already exists; OAuth not needed"
+                        placeholder="e.g. Database schema already finalized"
                         value={assumptions}
                         onChange={(e) => setAssumptions(e.target.value)}
                       />
                     </div>
 
                     <div className="form-group">
-                      <label className="form-label" htmlFor="participant-success">Success Criteria / Definition of Done (Optional)</label>
+                      <label className="form-label" htmlFor="participant-success">Success Criteria (Optional)</label>
                       <input
                         id="participant-success"
                         type="text"
                         className="form-input"
-                        placeholder="e.g. CI pipeline green, all tests pass"
+                        placeholder="e.g. Unit tests pass, API responds 200"
                         value={successCriteria}
                         onChange={(e) => setSuccessCriteria(e.target.value)}
                       />
@@ -596,69 +543,57 @@ export default function App() {
                       className="btn btn-secondary"
                       style={{ width: '100%' }}
                     >
-                      {loading ? <span className="spinner" /> : <CheckCircle2 size={16} />}
-                      Submit My Interpretation
+                      {loading ? <span className="spinner" /> : 'Submit Interpretation'}
                     </button>
                   </form>
                 </div>
               </div>
 
-              {/* Right Column: The Misunderstanding Map & Bridge Test */}
               {issues.length > 0 && (
                 <div>
-                  {/* The Bridge Test Metric Widget */}
                   {bridgeTest && (
-                    <div className="card-elevated" style={{ marginBottom: '1.5rem', border: '1px solid var(--accent-purple)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <Award size={20} style={{ color: 'var(--accent-purple)' }} />
-                          <h3 style={{ fontSize: '1.125rem', fontWeight: 800 }}>The Bridge Test</h3>
-                        </div>
+                    <div className="card-elevated" style={{ marginBottom: '1.25rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                        <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>The Bridge Test</h3>
                         <span className={`badge badge-${bridgeTest.bridge_status === 'bridged' ? 'resolved' : bridgeTest.bridge_status === 'in_progress' ? 'medium' : 'critical'}`}>
-                          {bridgeTest.bridge_status.replace('_', ' ').toUpperCase()}
+                          {bridgeTest.bridge_status.replace('_', ' ')}
                         </span>
                       </div>
 
-                      {/* Progress Bar */}
                       <div className="progress-bar-bg">
                         <div className="progress-bar-fill" style={{ width: `${bridgeTest.resolution_percentage}%` }} />
                       </div>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem', marginTop: '0.75rem', textAlign: 'center' }}>
-                        <div style={{ background: 'var(--bg-surface)', padding: '0.625rem', borderRadius: '8px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem', marginTop: '0.625rem', textAlign: 'center' }}>
+                        <div style={{ background: 'var(--bg-primary)', padding: '0.5rem', borderRadius: '6px' }}>
                           <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Detected</span>
-                          <div style={{ fontSize: '1.25rem', fontWeight: 800 }}>{bridgeTest.initial_issues_count}</div>
+                          <div style={{ fontSize: '1.125rem', fontWeight: 700 }}>{bridgeTest.initial_issues_count}</div>
                         </div>
-                        <div style={{ background: 'var(--bg-surface)', padding: '0.625rem', borderRadius: '8px' }}>
-                          <span style={{ fontSize: '0.75rem', color: '#6ee7b7' }}>Resolved</span>
-                          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#10b981' }}>{bridgeTest.resolved_count}</div>
+                        <div style={{ background: 'var(--bg-primary)', padding: '0.5rem', borderRadius: '6px' }}>
+                          <span style={{ fontSize: '0.75rem', color: '#86efac' }}>Resolved</span>
+                          <div style={{ fontSize: '1.125rem', fontWeight: 700, color: '#16a34a' }}>{bridgeTest.resolved_count}</div>
                         </div>
-                        <div style={{ background: 'var(--bg-surface)', padding: '0.625rem', borderRadius: '8px' }}>
+                        <div style={{ background: 'var(--bg-primary)', padding: '0.5rem', borderRadius: '6px' }}>
                           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Dismissed</span>
-                          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-muted)' }}>{bridgeTest.dismissed_count}</div>
+                          <div style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-muted)' }}>{bridgeTest.dismissed_count}</div>
                         </div>
-                        <div style={{ background: 'var(--bg-surface)', padding: '0.625rem', borderRadius: '8px' }}>
-                          <span style={{ fontSize: '0.75rem', color: '#fca5a5' }}>Open Gaps</span>
-                          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#ef4444' }}>{bridgeTest.open_count}</div>
+                        <div style={{ background: 'var(--bg-primary)', padding: '0.5rem', borderRadius: '6px' }}>
+                          <span style={{ fontSize: '0.75rem', color: '#fca5a5' }}>Open</span>
+                          <div style={{ fontSize: '1.125rem', fontWeight: 700, color: '#dc2626' }}>{bridgeTest.open_count}</div>
                         </div>
                       </div>
 
-                      <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.75rem', fontStyle: 'italic' }}>
-                        * {bridgeTest.disclaimer}
+                      <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.625rem' }}>
+                        {bridgeTest.disclaimer}
                       </p>
                     </div>
                   )}
 
-                  {/* Misunderstanding Map Issues */}
-                  <div className="card" style={{ marginBottom: '1.5rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <Layers size={18} style={{ color: 'var(--primary)' }} />
-                        <h3 style={{ fontSize: '1.125rem', fontWeight: 700 }}>The Misunderstanding Map</h3>
-                      </div>
+                  <div className="card" style={{ marginBottom: '1.25rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                      <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>Misunderstanding Map</h3>
 
-                      {/* Filter Tabs */}
-                      <div style={{ display: 'flex', gap: '0.375rem', background: 'var(--bg-primary)', padding: '0.25rem', borderRadius: '8px' }}>
+                      <div style={{ display: 'flex', gap: '0.25rem', background: 'var(--bg-primary)', padding: '0.2rem', borderRadius: '4px' }}>
                         {['all', 'open', 'resolved', 'dismissed'].map((f) => (
                           <button
                             key={f}
@@ -668,10 +603,10 @@ export default function App() {
                               background: issueFilter === f ? 'var(--bg-surface-elevated)' : 'transparent',
                               border: 'none',
                               color: issueFilter === f ? 'var(--text-primary)' : 'var(--text-muted)',
-                              padding: '0.25rem 0.625rem',
-                              borderRadius: '6px',
+                              padding: '0.2rem 0.5rem',
+                              borderRadius: '4px',
                               fontSize: '0.75rem',
-                              fontWeight: 600,
+                              fontWeight: 500,
                               cursor: 'pointer',
                               textTransform: 'capitalize',
                             }}
@@ -682,14 +617,13 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Issue Cards */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
                       {filteredIssues.map((issue) => (
                         <div
                           key={issue.id}
                           className="card-elevated"
                           style={{
-                            borderLeft: `4px solid ${
+                            borderLeft: `3px solid ${
                               issue.priority === 'critical'
                                 ? 'var(--priority-critical)'
                                 : issue.priority === 'high'
@@ -700,10 +634,10 @@ export default function App() {
                             }`,
                           }}
                         >
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem', marginBottom: '0.375rem' }}>
+                            <div style={{ display: 'flex', gap: '0.375rem', alignItems: 'center' }}>
                               <span className={`badge badge-${issue.priority}`}>
-                                Priority: {issue.priority}
+                                {issue.priority}
                               </span>
                               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'capitalize' }}>
                                 {issue.type.replace('_', ' ')}
@@ -714,44 +648,42 @@ export default function App() {
                             </span>
                           </div>
 
-                          <h4 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.375rem' }}>
+                          <h4 style={{ fontSize: '0.9375rem', fontWeight: 600, marginBottom: '0.25rem' }}>
                             {issue.title}
                           </h4>
-                          <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                          <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '0.625rem' }}>
                             {issue.description}
                           </p>
 
-                          {/* Actionable Neutral Clarification Question */}
-                          <div style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', padding: '0.75rem', borderRadius: '8px', marginBottom: '0.75rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', color: '#93c5fd', fontSize: '0.8125rem', fontWeight: 700, marginBottom: '0.25rem' }}>
-                              <HelpCircle size={14} />
-                              Clarification Question for Team:
+                          <div style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', padding: '0.625rem', borderRadius: '6px', marginBottom: '0.625rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', color: '#93c5fd', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.2rem' }}>
+                              <HelpCircle size={13} />
+                              Clarification Question:
                             </div>
-                            <div style={{ fontSize: '0.875rem', color: 'var(--text-primary)', fontWeight: 600 }}>
+                            <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)' }}>
                               "{issue.clarification_question}"
                             </div>
                           </div>
 
-                          {/* Verbatim Evidence Accordion */}
-                          <div style={{ marginBottom: '0.75rem' }}>
+                          <div style={{ marginBottom: '0.625rem' }}>
                             <button
                               type="button"
                               onClick={() => toggleEvidence(issue.id)}
                               style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.25rem', padding: 0 }}
                             >
-                              {expandedEvidence[issue.id] ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                              {expandedEvidence[issue.id] ? 'Hide Verified Evidence' : `Show Verified Evidence (${issue.evidence?.length || 0})`}
+                              {expandedEvidence[issue.id] ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                              {expandedEvidence[issue.id] ? 'Hide Evidence' : `Evidence (${issue.evidence?.length || 0})`}
                             </button>
 
                             {expandedEvidence[issue.id] && (
-                              <div style={{ marginTop: '0.5rem' }}>
+                              <div style={{ marginTop: '0.375rem' }}>
                                 {issue.evidence?.map((ev, idx) => (
                                   <div key={idx} className="evidence-quote">
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.15rem' }}>
                                       <span><strong>{ev.participant_id}</strong>:</span>
-                                      <span style={{ fontStyle: 'italic' }}>field: {ev.source_field}</span>
+                                      <span style={{ color: 'var(--text-muted)' }}>{ev.source_field}</span>
                                     </div>
-                                    <div style={{ fontStyle: 'italic', color: 'var(--text-primary)' }}>
+                                    <div style={{ color: 'var(--text-primary)', fontStyle: 'italic' }}>
                                       "{ev.quote}"
                                     </div>
                                   </div>
@@ -760,16 +692,14 @@ export default function App() {
                             )}
                           </div>
 
-                          {/* Existing Resolution Notes if resolved */}
                           {issue.resolution_notes && (
-                            <div style={{ fontSize: '0.8125rem', color: '#6ee7b7', background: 'rgba(16, 185, 129, 0.1)', padding: '0.5rem 0.75rem', borderRadius: '6px', marginBottom: '0.75rem' }}>
-                              <strong>Agreed Decision:</strong> {issue.resolution_notes}
+                            <div style={{ fontSize: '0.8125rem', color: '#86efac', background: '#113524', padding: '0.4rem 0.625rem', borderRadius: '4px', marginBottom: '0.625rem' }}>
+                              <strong>Decision:</strong> {issue.resolution_notes}
                             </div>
                           )}
 
-                          {/* Action Controls */}
                           {resolvingIssueId === issue.id ? (
-                            <div style={{ background: 'var(--bg-surface)', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                            <div style={{ background: 'var(--bg-primary)', padding: '0.625rem', borderRadius: '6px', border: '1px solid var(--border)' }}>
                               <label className="form-label" htmlFor={`decision-notes-${issue.id}`}>Document Agreed Decision:</label>
                               <input
                                 id={`decision-notes-${issue.id}`}
@@ -780,12 +710,12 @@ export default function App() {
                                 onChange={(e) => setResolutionNotes(e.target.value)}
                                 style={{ marginBottom: '0.5rem' }}
                               />
-                              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                              <div style={{ display: 'flex', gap: '0.375rem' }}>
                                 <button
                                   type="button"
                                   onClick={() => handleUpdateIssue(issue.id, 'resolved', resolutionNotes)}
                                   className="btn btn-success"
-                                  style={{ padding: '0.375rem 0.75rem', fontSize: '0.8125rem' }}
+                                  style={{ padding: '0.35rem 0.625rem', fontSize: '0.75rem' }}
                                 >
                                   Save Resolution
                                 </button>
@@ -793,14 +723,14 @@ export default function App() {
                                   type="button"
                                   onClick={() => setResolvingIssueId(null)}
                                   className="btn btn-secondary"
-                                  style={{ padding: '0.375rem 0.75rem', fontSize: '0.8125rem' }}
+                                  style={{ padding: '0.35rem 0.625rem', fontSize: '0.75rem' }}
                                 >
                                   Cancel
                                 </button>
                               </div>
                             </div>
                           ) : (
-                            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
                               {issue.resolution_status === 'open' && (
                                 <>
                                   <button
@@ -810,19 +740,17 @@ export default function App() {
                                       setResolutionNotes('');
                                     }}
                                     className="btn btn-secondary"
-                                    style={{ padding: '0.375rem 0.75rem', fontSize: '0.8125rem', color: '#6ee7b7' }}
+                                    style={{ padding: '0.3rem 0.625rem', fontSize: '0.75rem', color: '#86efac' }}
                                   >
-                                    <CheckCircle2 size={14} />
-                                    Resolve Issue
+                                    Resolve
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => handleUpdateIssue(issue.id, 'dismissed', 'Marked out-of-scope by team')}
                                     className="btn btn-secondary"
-                                    style={{ padding: '0.375rem 0.75rem', fontSize: '0.8125rem', color: 'var(--text-muted)' }}
+                                    style={{ padding: '0.3rem 0.625rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}
                                   >
-                                    <XCircle size={14} />
-                                    Dismiss (Out of Scope)
+                                    Dismiss
                                   </button>
                                 </>
                               )}
@@ -831,10 +759,9 @@ export default function App() {
                                   type="button"
                                   onClick={() => handleUpdateIssue(issue.id, 'open', null)}
                                   className="btn btn-secondary"
-                                  style={{ padding: '0.375rem 0.75rem', fontSize: '0.8125rem' }}
+                                  style={{ padding: '0.3rem 0.625rem', fontSize: '0.75rem' }}
                                 >
-                                  <RefreshCw size={13} />
-                                  Re-open Issue
+                                  Re-open
                                 </button>
                               )}
                             </div>
@@ -844,44 +771,38 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Shared Agreement & Confirmation Section */}
                   {agreement && (
-                    <div className="card" style={{ marginBottom: '1.5rem', border: '1px solid #10b981' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <CheckSquare size={20} style={{ color: '#10b981' }} />
-                          <h3 style={{ fontSize: '1.125rem', fontWeight: 800 }}>Shared Confirmed Agreement</h3>
-                        </div>
+                    <div className="card">
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                        <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>Shared Confirmed Agreement</h3>
                         <span className={`badge badge-${agreement.is_fully_confirmed ? 'resolved' : 'medium'}`}>
-                          {agreement.is_fully_confirmed ? 'Fully Confirmed' : 'Confirmation Pending'}
+                          {agreement.is_fully_confirmed ? 'Confirmed' : 'Pending'}
                         </span>
                       </div>
 
-                      {/* Checklist */}
-                      <div style={{ marginBottom: '1.25rem' }}>
-                        <h4 style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-                          AGREED DELIVERABLES & REQUIREMENTS:
-                        </h4>
-                        <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                      <div style={{ marginBottom: '1rem' }}>
+                        <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.375rem', textTransform: 'uppercase' }}>
+                          Agreed Requirements:
+                        </div>
+                        <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                           {agreement.items?.map((item, idx) => (
-                            <li key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', fontSize: '0.875rem' }}>
-                              <CheckCircle2 size={16} style={{ color: '#10b981', flexShrink: 0, marginTop: '2px' }} />
+                            <li key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.375rem', fontSize: '0.8125rem' }}>
+                              <CheckCircle2 size={14} style={{ color: '#16a34a', flexShrink: 0, marginTop: '2px' }} />
                               <span>{item}</span>
                             </li>
                           ))}
                         </ul>
                       </div>
 
-                      {/* Excluded Items */}
                       {agreement.excluded_items?.length > 0 && (
-                        <div style={{ marginBottom: '1.25rem' }}>
-                          <h4 style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
-                            CONFIRMED OUT OF SCOPE / DEFERRED:
-                          </h4>
-                          <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                        <div style={{ marginBottom: '1rem' }}>
+                          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.375rem', textTransform: 'uppercase' }}>
+                            Confirmed Out of Scope:
+                          </div>
+                          <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                             {agreement.excluded_items.map((item, idx) => (
-                              <li key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-                                <XCircle size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
+                              <li key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.375rem', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+                                <XCircle size={14} style={{ flexShrink: 0, marginTop: '2px' }} />
                                 <span>{item}</span>
                               </li>
                             ))}
@@ -889,19 +810,18 @@ export default function App() {
                         </div>
                       )}
 
-                      {/* Multi-Party Confirmation Bar */}
-                      <div style={{ background: 'var(--bg-surface-elevated)', padding: '0.875rem', borderRadius: '8px', border: '1px solid var(--border)' }}>
-                        <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                      <div style={{ background: 'var(--bg-surface-elevated)', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.375rem' }}>
                           <strong>Confirmed By:</strong>{' '}
-                          {agreement.confirmed_by?.length > 0 ? agreement.confirmed_by.join(', ') : 'No confirmations yet.'}
+                          {agreement.confirmed_by?.length > 0 ? agreement.confirmed_by.join(', ') : 'None yet'}
                         </div>
 
-                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', gap: '0.375rem', alignItems: 'center' }}>
                           <input
                             type="text"
                             className="form-input"
-                            style={{ maxWidth: '240px', padding: '0.375rem 0.75rem', fontSize: '0.8125rem' }}
-                            placeholder="Enter your participant ID"
+                            style={{ maxWidth: '200px', padding: '0.35rem 0.625rem', fontSize: '0.75rem' }}
+                            placeholder="Your participant ID"
                             value={confirmingParticipant}
                             onChange={(e) => setConfirmingParticipant(e.target.value)}
                           />
@@ -910,10 +830,9 @@ export default function App() {
                             onClick={handleConfirmAgreement}
                             disabled={!confirmingParticipant.trim()}
                             className="btn btn-success"
-                            style={{ padding: '0.375rem 0.75rem', fontSize: '0.8125rem' }}
+                            style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}
                           >
-                            <CheckCircle2 size={14} />
-                            Confirm Agreement
+                            Confirm
                           </button>
                         </div>
                       </div>

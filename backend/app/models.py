@@ -1,12 +1,14 @@
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import (
+    Boolean,
     Column,
     String,
     Text,
     Integer,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     UniqueConstraint,
     Index
