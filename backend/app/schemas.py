@@ -1,130 +1,234 @@
+import uuid
 from datetime import datetime
-from typing import Any, Literal, Optional
-from pydantic import BaseModel, ConfigDict, Field
-from backend.ai.schemas import (
-    AnalysisStatus,
-    ComplementaryPerspective,
-    IssueCounts,
-)
+from typing import Optional, List, Literal
+from pydantic import BaseModel, Field, ConfigDict
 
 
-class SessionCreate(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+# Enums and Types
+SessionState = Literal[
+    "collecting_responses",
+    "analyzing",
+    "reviewing_issues",
+    "agreement_pending",
+    "completed"
+]
 
-    title: str = Field(..., min_length=1, max_length=200)
-    description: Optional[str] = Field(default=None, max_length=2000)
+IssueType = Literal[
+    "contradiction",
+    "assumption",
+    "omission",
+    "scope_difference",
+    "success_criteria_difference"
+]
+
+IssuePriority = Literal["low", "medium", "high"]
+
+IssueStatus = Literal["open", "discussing", "resolved", "dismissed"]
+
+AgreementStatus = Literal["draft", "pending_confirmation", "confirmed"]
 
 
-class SessionRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+# Generic Error Schema
+class ErrorDetail(BaseModel):
+    detail: str
 
-    id: str
-    session_code: str
-    title: str
-    description: Optional[str] = None
+
+# Health Schema
+class HealthResponse(BaseModel):
     status: str
-    participant_count: int = 0
-    created_at: datetime
-    updated_at: datetime
+    database: str
+    timestamp: datetime
 
 
-class ParticipantCreate(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
-
-    participant_id: str = Field(..., min_length=1, max_length=100)
-    name: Optional[str] = Field(default=None, max_length=100)
-    interpretation: str = Field(..., min_length=1, max_length=5000)
-    assumptions: Optional[str] = Field(default=None, max_length=2000)
-    success_criteria: Optional[str] = Field(default=None, max_length=2000)
-
-
-class ParticipantRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    session_id: str
-    participant_id: str
-    name: Optional[str] = None
-    interpretation: str
-    assumptions: Optional[str] = None
-    success_criteria: Optional[str] = None
-    submitted_at: datetime
+# Session Schemas
+class SessionCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255, description="Task title")
+    description: str = Field(..., min_length=1, description="Original task or instruction")
+    context: Optional[str] = Field(None, description="Optional background context, constraints, or goals")
+    creator_name: Optional[str] = Field("Session Creator", min_length=1, max_length=100, description="Display name for creator")
+    min_participants: Optional[int] = Field(2, ge=2, le=20, description="Minimum participants required before analysis")
 
 
-class IssueRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class SessionCreateResponse(BaseModel):
+    id: uuid.UUID
+    join_code: str
+    status: SessionState
+    creator_participant_id: uuid.UUID
+    participant_token: str
 
-    id: str
-    session_id: str
-    analysis_id: str
-    type: str
+
+class SessionJoinRequest(BaseModel):
+    join_code: str = Field(..., min_length=3, max_length=32, description="Case-insensitive session join code")
+    display_name: str = Field(..., min_length=1, max_length=100, description="Participant display name")
+
+
+class SessionJoinResponse(BaseModel):
+    participant_id: uuid.UUID
+    session_id: uuid.UUID
+    status: SessionState
+    participant_token: str
+
+
+class SessionDetailResponse(BaseModel):
+    id: uuid.UUID
+    join_code: str
     title: str
     description: str
-    evidence: list[dict[str, Any]]
-    impact: str
-    priority: str
-    confidence: float
+    context: Optional[str] = None
+    status: SessionState
+    min_participants: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ParticipantItem(BaseModel):
+    id: uuid.UUID
+    display_name: str
+    role: str
+    has_submitted: bool
+    joined_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SessionParticipantsResponse(BaseModel):
+    session_id: uuid.UUID
+    participants: List[ParticipantItem]
+
+
+class SessionStatusResponse(BaseModel):
+    session_id: uuid.UUID
+    status: SessionState
+    participant_count: int
+    submission_count: int
+    min_participants: int
+    user_has_submitted: bool
+    can_start_analysis: bool
+
+
+# Interpretation Schemas
+class InterpretationCreateRequest(BaseModel):
+    response_text: str = Field(..., min_length=1, description="Independent response explaining understanding of the task")
+    assumptions: Optional[List[str]] = Field(default_factory=list, description="Optional list of explicit assumptions made")
+    success_criteria: Optional[List[str]] = Field(default_factory=list, description="Optional list of completion criteria")
+
+
+class InterpretationResponse(BaseModel):
+    interpretation_id: uuid.UUID
+    submitted: bool
+    message: str
+
+
+# AI and Issue Schemas
+class IssueEvidence(BaseModel):
+    participant_id: uuid.UUID
+    quote: str
+
+
+class CandidateIssue(BaseModel):
+    type: IssueType
+    title: str = Field(..., max_length=255)
+    description: str
+    evidence: List[IssueEvidence] = Field(..., min_length=1)
+    priority: IssuePriority = "medium"
     clarification_question: str
-    resolution_status: str
-    resolution_notes: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
 
 
-class IssueUpdateStatus(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+class ComplementaryPerspective(BaseModel):
+    title: str
+    description: str
+    evidence: Optional[List[IssueEvidence]] = Field(default_factory=list)
 
-    resolution_status: Literal["open", "resolved", "dismissed"]
-    resolution_notes: Optional[str] = Field(default=None, max_length=1000)
 
-
-class AnalysisResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    session_id: str
-    analysis_id: Optional[str] = None
-    status: AnalysisStatus
+class AIAnalysisResult(BaseModel):
     summary: str
-    issues: list[IssueRead] = Field(default_factory=list)
-    complementary_perspectives: list[ComplementaryPerspective] = Field(
-        default_factory=list
-    )
-    issue_counts: IssueCounts
-    error_message: Optional[str] = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    issues: List[CandidateIssue]
+    complementary_perspectives: Optional[List[ComplementaryPerspective]] = Field(default_factory=list)
 
 
-class AgreementRead(BaseModel):
+class AnalyzeResponse(BaseModel):
+    analysis_id: uuid.UUID
+    status: str
+    issues_count: int
+
+
+class IssueDetailResponse(BaseModel):
+    id: uuid.UUID
+    session_id: uuid.UUID
+    analysis_id: uuid.UUID
+    type: IssueType
+    title: str
+    description: str
+    evidence: List[IssueEvidence]
+    priority: IssuePriority
+    clarification_question: str
+    status: IssueStatus
+    resolution_text: Optional[str] = None
+    created_at: datetime
+    resolved_at: Optional[datetime] = None
+
     model_config = ConfigDict(from_attributes=True)
 
-    id: str
-    session_id: str
-    items: list[str] = Field(default_factory=list)
-    excluded_items: list[str] = Field(default_factory=list)
-    confirmed_by: list[str] = Field(default_factory=list)
-    is_fully_confirmed: bool = False
+
+class IssuesListResponse(BaseModel):
+    session_id: uuid.UUID
+    issues: List[IssueDetailResponse]
+    complementary_perspectives: List[ComplementaryPerspective]
+
+
+class IssueUpdateRequest(BaseModel):
+    status: IssueStatus
+    resolution_text: Optional[str] = None
+
+
+class IssueUpdateResponse(BaseModel):
+    id: uuid.UUID
+    status: IssueStatus
+    resolution_text: Optional[str] = None
+
+
+# Agreement Schemas
+class AgreementItem(BaseModel):
+    text: str
+    source: str = "resolved_issue"  # "task_description" | "resolved_issue" | "ai_suggestion"
+
+
+class AgreementContent(BaseModel):
+    confirmed_requirements: List[AgreementItem] = Field(default_factory=list)
+    unresolved_decisions: List[AgreementItem] = Field(default_factory=list)
+    optional_suggestions: List[AgreementItem] = Field(default_factory=list)
+
+
+class AgreementResponse(BaseModel):
+    agreement_id: uuid.UUID
+    session_id: uuid.UUID
+    version: int
+    status: AgreementStatus
+    content: AgreementContent
     created_at: datetime
-    updated_at: datetime
 
 
-class AgreementConfirmPayload(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+class AgreementConfirmRequest(BaseModel):
+    confirmed: bool = True
+    comment: Optional[str] = None
 
-    participant_id: str = Field(..., min_length=1, max_length=100)
+
+class AgreementConfirmResponse(BaseModel):
+    confirmation_id: uuid.UUID
+    agreement_id: uuid.UUID
+    participant_id: uuid.UUID
+    confirmed: bool
+    all_participants_confirmed: bool
+    session_status: SessionState
 
 
-class BridgeTestResponse(BaseModel):
-    session_id: str
-    initial_issues_count: int
-    resolved_count: int
-    dismissed_count: int
-    open_count: int
-    resolution_percentage: float
-    is_fully_confirmed: bool
-    confirmed_participants: list[str]
-    total_participants: int
-    bridge_status: str
-    disclaimer: str = (
-        "This metric reflects the resolution of identified differences among participants, "
-        "not proof of universal understanding."
-    )
+# Bridge Test Schemas
+class BridgeTestMetrics(BaseModel):
+    initial_issue_count: int
+    resolved_issue_count: int
+    unresolved_issue_count: int
+    dismissed_issue_count: int
+    resolution_rate: Optional[float] = None
+    agreement_status: str

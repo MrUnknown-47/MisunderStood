@@ -1,52 +1,97 @@
+import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import AsyncGenerator
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 
-from backend.app.config import settings
-from backend.app.database import init_db
-from backend.app.routes.agreements import router as agreements_router
-from backend.app.routes.issues import router as issues_router
-from backend.app.routes.sessions import router as sessions_router
+from app.config import get_settings
+from app.database import init_db
+from app.routers import (
+    health,
+    sessions,
+    interpretations,
+    analysis,
+    issues,
+    agreements,
+    bridge_test
+)
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger("misunderstood")
+settings = get_settings()
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+async def lifespan(app: FastAPI):
+    # Startup: ensure tables are created
+    logger.info("Initializing database tables...")
     init_db()
+    logger.info("MISUNDERSTOOD backend started successfully.")
     yield
+    # Shutdown
+    logger.info("MISUNDERSTOOD backend shutting down.")
 
 
 app = FastAPI(
-    title=settings.APP_NAME,
-    version=settings.APP_VERSION,
-    description="Same conversation. Different realities. AI-powered misunderstanding detection.",
-    lifespan=lifespan,
+    title="MISUNDERSTOOD API",
+    description="Backend API for MISUNDERSTOOD — 'Same conversation. Different realities.'",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+    lifespan=lifespan
 )
 
+# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(sessions_router, prefix=settings.API_PREFIX)
-app.include_router(issues_router, prefix=settings.API_PREFIX)
-app.include_router(agreements_router, prefix=settings.API_PREFIX)
+
+# Global Exception Handlers
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
+    )
 
 
-@app.get("/api/health", tags=["Health"])
-def health_check() -> dict[str, str]:
-    return {
-        "status": "healthy",
-        "app": settings.APP_NAME,
-        "version": settings.APP_VERSION,
-    }
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = exc.errors()
+    first_error_msg = errors[0].get("msg", "Invalid request payload.") if errors else "Validation error."
+    first_field = ".".join(str(loc) for loc in errors[0].get("loc", [])) if errors else ""
+    detail = f"{first_field}: {first_error_msg}" if first_field else first_error_msg
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT if hasattr(status, "HTTP_422_UNPROCESSABLE_CONTENT") else 422,
+        content={"detail": detail}
+    )
 
 
-dist_path = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
-if dist_path.exists():
-    app.mount("/", StaticFiles(directory=str(dist_path), html=True), name="frontend")
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled server error on {request.method} {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "An internal server error occurred."}
+    )
+
+
+# Include Routers
+app.include_router(health.router)
+app.include_router(sessions.router)
+app.include_router(interpretations.router)
+app.include_router(analysis.router)
+app.include_router(issues.router)
+app.include_router(agreements.router)
+app.include_router(bridge_test.router)
