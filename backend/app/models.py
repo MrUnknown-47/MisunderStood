@@ -6,6 +6,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Integer,
     JSON,
     String,
     Text,
@@ -17,8 +18,10 @@ from backend.app.database import Base
 
 
 def generate_session_code() -> str:
+    """Generate a clean, unambiguous join code prefixed with GAP- (e.g. GAP-7K9M2P)."""
     alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    return "".join(secrets.choice(alphabet) for _ in range(6))
+    code = "".join(secrets.choice(alphabet) for _ in range(6))
+    return f"GAP-{code[:3]}{code[3:]}"
 
 
 class SessionModel(Base):
@@ -26,15 +29,24 @@ class SessionModel(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     session_code = Column(
-        String(12),
+        String(32),
         unique=True,
         index=True,
         nullable=False,
         default=generate_session_code,
     )
-    title = Column(String(200), nullable=False)
+    join_code = Column(
+        String(32),
+        unique=True,
+        index=True,
+        nullable=False,
+        default=generate_session_code,
+    )
+    title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
-    status = Column(String(30), nullable=False, default="collecting")
+    context = Column(Text, nullable=True)
+    status = Column(String(32), nullable=False, default="collecting")
+    min_participants = Column(Integer, nullable=False, default=2)
     created_at = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -49,7 +61,7 @@ class SessionModel(Base):
         "ParticipantModel",
         back_populates="session",
         cascade="all, delete-orphan",
-        order_by="ParticipantModel.submitted_at",
+        order_by="ParticipantModel.joined_at",
     )
     analyses = relationship(
         "AnalysisModel",
@@ -70,6 +82,14 @@ class SessionModel(Base):
         cascade="all, delete-orphan",
     )
 
+    @property
+    def participant_count(self) -> int:
+        """Count of participants who have submitted an interpretation."""
+        return len([
+            p for p in self.participants
+            if p.interpretation and str(p.interpretation).strip()
+        ])
+
 
 class ParticipantModel(Base):
     __tablename__ = "participants"
@@ -83,14 +103,26 @@ class ParticipantModel(Base):
     )
     participant_id = Column(String(100), nullable=False)
     name = Column(String(100), nullable=True)
-    interpretation = Column(Text, nullable=False)
+    display_name = Column(String(100), nullable=True)
+    role = Column(String(32), nullable=False, default="participant")
+    token_hash = Column(String(64), nullable=True, index=True)
+    interpretation = Column(Text, nullable=True)
     assumptions = Column(Text, nullable=True)
     success_criteria = Column(Text, nullable=True)
-    submitted_at = Column(
+    submitted_at = Column(DateTime(timezone=True), nullable=True)
+    joined_at = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
     session = relationship("SessionModel", back_populates="participants")
+
+    @property
+    def effective_name(self) -> str:
+        return self.display_name or self.name or self.participant_id or "Participant"
+
+    @property
+    def has_submitted(self) -> bool:
+        return bool(self.interpretation and str(self.interpretation).strip())
 
 
 class AnalysisModel(Base):

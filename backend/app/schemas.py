@@ -1,6 +1,6 @@
 from datetime import datetime
-from typing import Any, Literal, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any, Literal, Optional, Union
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from backend.ai.schemas import (
     AnalysisStatus,
     ComplementaryPerspective,
@@ -11,8 +11,11 @@ from backend.ai.schemas import (
 class SessionCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    title: str = Field(..., min_length=1, max_length=200)
+    title: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = Field(default=None, max_length=2000)
+    context: Optional[str] = Field(default=None, max_length=2000)
+    creator_name: Optional[str] = Field(default=None, max_length=100)
+    min_participants: Optional[int] = Field(default=2, ge=2, le=20)
 
 
 class SessionRead(BaseModel):
@@ -20,12 +23,95 @@ class SessionRead(BaseModel):
 
     id: str
     session_code: str
+    join_code: str
     title: str
     description: Optional[str] = None
+    context: Optional[str] = None
     status: str
+    min_participants: int = 2
     participant_count: int = 0
+    creator_participant_id: Optional[str] = None
+    participant_token: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+
+class SessionJoinRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    join_code: str = Field(..., min_length=3, max_length=32)
+    display_name: str = Field(..., min_length=1, max_length=100)
+    participant_id: Optional[str] = Field(default=None, max_length=100)
+
+
+class SessionJoinResponse(BaseModel):
+    participant_id: str
+    session_id: str
+    display_name: str
+    status: str
+    participant_token: str
+
+
+class ParticipantItem(BaseModel):
+    """Privacy-preserving participant item strictly omitting interpretation text."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    display_name: str
+    role: str
+    has_submitted: bool
+    joined_at: datetime
+
+
+class SessionParticipantsResponse(BaseModel):
+    session_id: str
+    participants: list[ParticipantItem]
+
+
+class SessionStatusResponse(BaseModel):
+    session_id: str
+    status: str
+    participant_count: int
+    submission_count: int
+    min_participants: int
+    user_has_submitted: bool
+    can_start_analysis: bool
+    user_interpretation: Optional[str] = None
+    user_assumptions: Optional[str] = None
+    user_success_criteria: Optional[str] = None
+
+
+class MyInterpretationResponse(BaseModel):
+    session_id: str
+    participant_id: str
+    display_name: str
+    has_submitted: bool
+    interpretation: Optional[str] = None
+    assumptions: Optional[str] = None
+    success_criteria: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+
+
+class InterpretationCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    response_text: Optional[str] = Field(default=None, max_length=5000)
+    interpretation: Optional[str] = Field(default=None, max_length=5000)
+    assumptions: Optional[Union[str, list[str]]] = None
+    success_criteria: Optional[Union[str, list[str]]] = None
+
+    @model_validator(mode="after")
+    def validate_text_present(self) -> "InterpretationCreate":
+        text = self.response_text or self.interpretation
+        if not text or not text.strip():
+            raise ValueError("Interpretation text cannot be blank.")
+        return self
+
+
+class InterpretationResponse(BaseModel):
+    interpretation_id: str
+    submitted: bool
+    message: str
 
 
 class ParticipantCreate(BaseModel):
@@ -48,7 +134,7 @@ class ParticipantRead(BaseModel):
     interpretation: str
     assumptions: Optional[str] = None
     success_criteria: Optional[str] = None
-    submitted_at: datetime
+    submitted_at: Optional[datetime] = None
 
 
 class IssueRead(BaseModel):

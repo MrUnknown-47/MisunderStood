@@ -99,8 +99,20 @@ def confirm_agreement(
             detail=f"Session '{session_id}' not found.",
         )
 
-    participant_ids = {p.participant_id for p in session.participants}
-    if payload.participant_id not in participant_ids:
+    submitting_participants = [
+        p for p in session.participants
+        if p.interpretation and str(p.interpretation).strip()
+    ]
+    if not submitting_participants:
+        submitting_participants = list(session.participants)
+
+    matching_participant = None
+    for p in submitting_participants:
+        if payload.participant_id in (p.participant_id, p.id):
+            matching_participant = p
+            break
+
+    if not matching_participant:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Participant '{payload.participant_id}' has not submitted to session '{session_id}'.",
@@ -117,8 +129,10 @@ def confirm_agreement(
         confirmed_list.append(payload.participant_id)
         agreement.confirmed_by = confirmed_list
 
-    all_participants = {p.participant_id for p in session.participants}
-    agreement.is_fully_confirmed = all_participants.issubset(set(confirmed_list))
+    agreement.is_fully_confirmed = bool(submitting_participants) and all(
+        any(pid in confirmed_list for pid in (p.participant_id, p.id))
+        for p in submitting_participants
+    )
 
     db.commit()
     db.refresh(agreement)
